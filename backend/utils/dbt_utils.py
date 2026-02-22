@@ -33,7 +33,11 @@ def get_dbt_env(project_path: Path, env_vars: Dict[str, str] = None) -> Dict[str
 def get_dbt_executable(project_path: Path) -> str:
     """
     Get the path to the dbt executable for the project.
-    First checks project venv, falls back to global dbt.
+
+    Resolution order:
+      1. dbt_executable key in .dbt-ui-config.yml  (custom launcher, e.g. Spark wrapper)
+      2. <project>/.dbt-ui-venv/bin/dbt  (managed venv)
+      3. "dbt"  (global PATH fallback)
 
     Args:
         project_path: Path to the dbt project
@@ -41,22 +45,29 @@ def get_dbt_executable(project_path: Path) -> str:
     Returns:
         Path to dbt executable as string
     """
+    from utils.config_utils import get_custom_dbt_executable
+
+    # 1. Honour per-project custom launcher (e.g. a Python script that injects Spark vars)
+    custom = get_custom_dbt_executable(project_path)
+    if custom:
+        print(f"[get_dbt_executable] Using custom executable from .dbt-ui-config.yml: {custom}")
+        return custom
+
+    # 2. Check project venv
     venv_path = project_path / ".dbt-ui-venv"
 
-    # Check for Unix-style path first
     dbt_path = venv_path / "bin" / "dbt"
     if dbt_path.exists():
         print(f"[get_dbt_executable] Using venv dbt: {dbt_path}")
         return str(dbt_path)
 
-    # Check for Windows-style path
     dbt_path = venv_path / "Scripts" / "dbt.exe"
     if dbt_path.exists():
         print(f"[get_dbt_executable] Using venv dbt: {dbt_path}")
         return str(dbt_path)
 
-    # Fall back to global dbt
-    print(f"[get_dbt_executable] No venv dbt found, using global dbt")
+    # 3. Fall back to global dbt
+    print("[get_dbt_executable] No venv dbt found, using global dbt")
     return "dbt"
 
 

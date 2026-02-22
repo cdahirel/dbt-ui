@@ -31,6 +31,7 @@ function Sidebar({
   onRefreshModifiedFiles,
   onRecreateVenv,
   onDbtRun,
+  onRunTests,
   venvMissing,
   hasUnsavedChanges = false,
   onCheckUnsavedChanges,
@@ -279,6 +280,11 @@ function Sidebar({
     }
   }
 
+  const handleRunTests = async () => {
+    if (!onRunTests) return
+    await onRunTests()
+  }
+
   const handleDbtCompile = async (selector: string) => {
     if (!onCompile) return
     setIsCompiling(true)
@@ -405,6 +411,7 @@ function Sidebar({
           }
         }}
         onGitClick={() => setShowGitModal(true)}
+        onRunTestsClick={handleRunTests}
         onRecreateVenv={onRecreateVenv}
         onChangeProject={onChangeProject}
       />

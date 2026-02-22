@@ -10,7 +10,7 @@ import re
 import yaml
 
 from models import ProjectPath
-from utils.dbt_utils import get_dbt_env
+from utils.dbt_utils import get_dbt_env, get_dbt_executable
 from routes.env_routes import get_env_vars_from_cookie
 from utils.subprocess_utils import run_command
 from metadv import (
@@ -241,11 +241,7 @@ async def metadv_source_columns(request: MetaDVSourceColumnsRequest, http_reques
     if not path.exists():
         return {"success": False, "error": "Project path does not exist", "columns": []}
 
-    venv_path = path / ".dbt-ui-venv"
-    if not venv_path.exists():
-        return {"success": False, "error": "Virtual environment not found", "columns": []}
-
-    dbt_executable = str(venv_path / "bin" / "dbt")
+    dbt_executable = get_dbt_executable(path)
 
     try:
         # Use dbt ref() function - the source_name is an existing model name

@@ -15,6 +15,7 @@ export interface SidebarProps {
   onRefreshModifiedFiles?: () => void
   onRecreateVenv?: () => void
   onDbtRun?: (selector: string, fullRefresh?: boolean) => Promise<void>
+  onRunTests?: () => Promise<void>
   venvMissing?: boolean
   hasUnsavedChanges?: boolean
   onCheckUnsavedChanges?: (actionType: string, callback: () => void) => void
