@@ -327,6 +327,39 @@ function MainLayout({ projectPath, dbtVersion: initialDbtVersion, onChangeProjec
     await handleDbtCommand('compile', selector)
   }
 
+  const handleRunTests = async (): Promise<void> => {
+    setIsDbtOperationRunning(true)
+    try {
+      const response = await apiFetch(apiUrl('/api/run-tests'), {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        credentials: 'include',
+        body: JSON.stringify({ path: projectPath }),
+      })
+      if (!response.ok) {
+        const result = await response.json()
+        setIsDbtOperationRunning(false)
+        setOperationResult({
+          success: false,
+          title: 'pytest failed to start',
+          message: result.detail || 'Failed to start tests',
+          output: '',
+        })
+        return
+      }
+      // pytest runs can take a long time: poll for up to 10 minutes
+      pollForCommandStatus('pytest', 600)
+    } catch (err) {
+      setIsDbtOperationRunning(false)
+      setOperationResult({
+        success: false,
+        title: 'pytest error',
+        message: 'Error connecting to backend',
+        output: String(err),
+      })
+    }
+  }
+
   // Handler to check for unsaved changes before performing an action
   const checkUnsavedChangesAndProceed = (actionType: string, callback: () => void) => {
     if (hasUnsavedChanges) {
@@ -361,9 +394,8 @@ function MainLayout({ projectPath, dbtVersion: initialDbtVersion, onChangeProjec
     }
   }
 
-  const pollForCommandStatus = (command: string) => {
+  const pollForCommandStatus = (command: string, maxAttempts = 120) => {
     let attempts = 0
-    const maxAttempts = 120 // Poll for up to 2 minutes
     const pollInterval = 1000 // Check every 1 second
 
     const checkStatus = () => {
@@ -567,6 +599,7 @@ function MainLayout({ projectPath, dbtVersion: initialDbtVersion, onChangeProjec
               onRefreshModifiedFiles={loadGitModifiedFiles}
               onRecreateVenv={handleRecreateVenvClick}
               onDbtRun={handleDbtRun}
+              onRunTests={handleRunTests}
               venvMissing={venvMissing}
               hasUnsavedChanges={hasUnsavedChanges}
               onCheckUnsavedChanges={checkUnsavedChangesAndProceed}

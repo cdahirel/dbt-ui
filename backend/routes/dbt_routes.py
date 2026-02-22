@@ -10,8 +10,7 @@ import re
 import os
 
 from models import ProjectPath, DbtLsRequest, DbtShowRequest, DbtCommandRequest
-from utils.dbt_utils import get_dbt_env, parse_dbt_manifest, get_node_from_manifest, extract_model_metadata
-from utils.venv_utils import get_venv_dbt_path
+from utils.dbt_utils import get_dbt_env, get_dbt_executable, parse_dbt_manifest, get_node_from_manifest, extract_model_metadata
 from utils.operation_lock import acquire_lock, release_lock, is_locked, get_lock_status
 from routes.env_routes import get_env_vars_from_cookie
 from utils.input_validation import validate_dbt_selector, validate_dbt_target
@@ -77,11 +76,8 @@ def run_dbt_command_task(path: Path, command: str, selector: str = "", target: s
             "started_at": datetime.now().isoformat()
         }
 
-        # Get dbt executable for this project (venv or global)
-        try:
-            dbt_executable = str(get_venv_dbt_path(path))
-        except FileNotFoundError:
-            dbt_executable = "dbt"
+        # Get dbt executable for this project (config override → venv → global)
+        dbt_executable = get_dbt_executable(path)
 
         # Build command
         cmd = [dbt_executable, command, "--project-dir", str(path), "--profiles-dir", str(path)]
@@ -241,11 +237,8 @@ async def dbt_ls(ls_request: DbtLsRequest):
     selector = validate_dbt_selector(ls_request.selector, "selector")
 
     try:
-        # Get dbt executable for this project (venv or global)
-        try:
-            dbt_executable = str(get_venv_dbt_path(path))
-        except FileNotFoundError:
-            dbt_executable = "dbt"
+        # Get dbt executable for this project (config override → venv → global)
+        dbt_executable = get_dbt_executable(path)
 
         # Build command
         cmd = [dbt_executable, "ls", "--resource-type", "model"]
@@ -311,11 +304,8 @@ async def dbt_show_model(show_request: DbtShowRequest, http_request: Request):
     limit = min(max(1, show_request.limit), 1000)
 
     try:
-        # Get dbt executable for this project (venv or global)
-        try:
-            dbt_executable = str(get_venv_dbt_path(path))
-        except FileNotFoundError:
-            dbt_executable = "dbt"
+        # Get dbt executable for this project (config override → venv → global)
+        dbt_executable = get_dbt_executable(path)
 
         # Get schema from manifest for the model
         manifest = parse_dbt_manifest(path)
@@ -655,6 +645,96 @@ async def get_compiled_sql(file_data: dict):
         status_code=404,
         detail=f"Model {file_name} not found in manifest."
     )
+
+
+def run_tests_task(path: Path):
+    """Background task: run the project's pytest suite and update dbt_command_status."""
+    import shlex
+    from utils.config_utils import get_test_command
+
+    path_str = str(path)
+    try:
+        dbt_command_status[path_str] = {
+            "status": "running",
+            "command": "pytest",
+            "selector": "",
+            "started_at": datetime.now().isoformat(),
+        }
+
+        test_cmd_str = get_test_command(path)
+        cmd = shlex.split(test_cmd_str)
+        print(f"[run-tests] Running: {' '.join(cmd)}")
+
+        env = get_dbt_env(path)
+        result = run_command(cmd, path, timeout=600, env=env)  # 10-minute timeout
+
+        if result.success:
+            dbt_command_status[path_str] = {
+                "status": "success",
+                "command": "pytest",
+                "selector": "",
+                "completed_at": datetime.now().isoformat(),
+                "output": result.stdout,
+            }
+        else:
+            dbt_command_status[path_str] = {
+                "status": "failed",
+                "command": "pytest",
+                "selector": "",
+                "completed_at": datetime.now().isoformat(),
+                "error": result.error,
+            }
+    except subprocess.TimeoutExpired:
+        dbt_command_status[path_str] = {
+            "status": "failed",
+            "command": "pytest",
+            "selector": "",
+            "completed_at": datetime.now().isoformat(),
+            "error": "pytest timed out after 10 minutes",
+        }
+    except Exception as e:
+        dbt_command_status[path_str] = {
+            "status": "failed",
+            "command": "pytest",
+            "selector": "",
+            "completed_at": datetime.now().isoformat(),
+            "error": str(e),
+        }
+    finally:
+        release_lock(path_str)
+
+
+@router.post("/api/run-tests")
+async def run_tests(project_path: ProjectPath, background_tasks: BackgroundTasks):
+    """Run the project's pytest test suite in the background.
+
+    The test command is read from .dbt-ui-config.yml (test_command key).
+    Defaults to 'pytest tests/ -v'.
+    Uses the same operation lock as dbt commands, so it is mutually exclusive
+    with running dbt compile/run/test/seed.
+    Poll /api/dbt-command-status for progress and results.
+    """
+    path = Path(project_path.path).expanduser().resolve()
+
+    if not path.exists():
+        raise HTTPException(status_code=404, detail="Project path does not exist")
+
+    path_str = str(path)
+    status = get_lock_status(path_str)
+    if status["is_locked"]:
+        raise HTTPException(
+            status_code=409,
+            detail=f"Another operation is already running: {status['operation']}",
+        )
+
+    if not acquire_lock(path_str, "Running pytest tests"):
+        raise HTTPException(
+            status_code=409,
+            detail=f"Another operation is already running: {get_lock_status(path_str)['operation']}",
+        )
+
+    background_tasks.add_task(run_tests_task, path)
+    return {"status": "started", "message": "Running pytest tests"}
 
 
 @router.post("/api/get-profile-targets")

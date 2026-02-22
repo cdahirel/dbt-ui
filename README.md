@@ -4,7 +4,6 @@ A modern web-based user interface for dbt-core projects.
 
 <img width="3316" height="2316" alt="CleanShot 2026-01-18 at 22 21 32@2x" src="https://github.com/user-attachments/assets/9208b7b1-2cc1-4d1e-bdbf-22a069397656" />
 
-
 ## Quick Start with Docker
 
 The easiest way to run dbt UI is using Docker:
@@ -19,6 +18,10 @@ docker-compose up --build
 
 # Or use existing git repositories from your computer
 GIT_REPOS_PATH=/path/to/your/repos docker-compose up --build
+```
+
+```bash
+docker-compose up --build
 ```
 
 ### Volume Mount
@@ -36,6 +39,7 @@ The backend API is available at `http://localhost:8000`
 ## Architecture
 
 This application consists of two parts:
+
 - **Frontend**: React + TypeScript web application (Vite) - served via nginx
 - **Backend**: FastAPI Python server for file system operations
 
@@ -51,13 +55,74 @@ This application consists of two parts:
 
 **Note**: Only git-based dbt projects are supported. The project must be a git repository.
 
+## Per-Project Configuration (`.dbt-ui-config.yml`)
+
+You can place a `.dbt-ui-config.yml` file at the **root of your dbt project** (next to `dbt_project.yml`) to customise how dbt-ui invokes dbt and runs tests.
+
+```yaml
+# .dbt-ui-config.yml
+
+# Optional: replace the dbt executable with a custom launcher.
+# Useful when you need to inject environment variables before dbt runs
+# (e.g. Spark/Hive connection settings, JAVA_HOME, HADOOP_CONF_DIR …).
+# The launcher receives the exact same arguments dbt would
+# (compile, run, --project-dir, --select, etc.).
+dbt_executable: "./run_dbt.py"
+
+# Optional: command used by the "Run Tests" button in the sidebar.
+# Defaults to "pytest tests/ -v" if not set.
+test_command: "pytest tests/ -v --tb=short"
+```
+
+### `dbt_executable`
+
+The executable resolution order is:
+
+1. `dbt_executable` in `.dbt-ui-config.yml` — your custom launcher
+2. `.dbt-ui-venv/bin/dbt` — the managed virtual environment
+3. `dbt` on `PATH` — global fallback
+
+**Example launcher** (`run_dbt.py`) that injects Spark variables:
+
+```python
+#!/usr/bin/env python3
+import os, sys, subprocess
+
+os.environ.setdefault("JAVA_HOME", "/usr/lib/jvm/java-11-openjdk")
+os.environ.setdefault("SPARK_HOME", "/opt/spark")
+os.environ.setdefault("HADOOP_CONF_DIR", "/etc/hadoop/conf")
+# … any other Spark/Hive env vars …
+
+sys.exit(subprocess.call(["dbt"] + sys.argv[1:]))
+```
+
+Make it executable: `chmod +x run_dbt.py`
+
+### `test_command`
+
+When the flask icon button (Run Tests) is clicked in the sidebar, dbt-ui runs this command inside the project directory with a 10-minute timeout. The full output (pass/fail summary, tracebacks) appears in the result modal.
+
+**Typical Spark/Hive pytest setup:**
+
+```yaml
+test_command: "pytest tests/ -v --tb=short -p no:warnings"
+```
+
+If your tests also need the Spark env vars, point to the same launcher or a wrapper:
+
+```yaml
+test_command: "python run_tests.py"
+```
+
+The result of each test run (stdout + exit code) is displayed in the same log modal used for dbt commands.
+
 ## Want to Contribute?
 
 Like `dbt-ui` and want to help make it even better? Check out our **[Contributing Guide](CONTRIBUTING.md)** to get started with discussions, issues, and pull requests. Your contributions help improve the experience for everyone!
 
 ## Project Structure
 
-```
+```ini
 dbt-ui/
 ├── frontend/           # React frontend application
 ├── backend/            # FastAPI backend server
@@ -75,7 +140,8 @@ This project is licensed under the [MIT License](LICENSE).
 This project uses open-source libraries under various permissive licenses (MIT, Apache-2.0, BSD-3-Clause, ISC).
 
 When you install dependencies via `npm install` and `pip install` or build a Docker image their license files are placed in:
-- **Frontend**: `node_modules/` (view with `npm ls`)
+
+- __Frontend__: `node_modules/` (view with `npm ls`)
 - **Backend**: Python site-packages (view with `pip list`)
 
 For license texts and copyright information, check each package's GitHub repository

@@ -4,6 +4,7 @@ import {
   Play,
   RefreshCw,
   GitBranch,
+  FlaskConical,
   PackageOpen,
   FolderSearch
 } from 'lucide-react'
@@ -21,6 +22,7 @@ interface SidebarActionsProps {
   onRunClick: () => void
   onCompileClick: () => void
   onGitClick: () => void
+  onRunTestsClick?: () => void
   onRecreateVenv?: () => void
   onChangeProject?: () => void
 }
@@ -37,6 +39,7 @@ function SidebarActions({
   onRunClick,
   onCompileClick,
   onGitClick,
+  onRunTestsClick,
   onRecreateVenv,
   onChangeProject
 }: SidebarActionsProps) {
@@ -66,6 +69,14 @@ function SidebarActions({
         onClick={onGitClick}
       >
         <GitBranch size={18} />
+      </button>
+      <button
+        className="action-button"
+        title="Run pytest tests"
+        onClick={onRunTestsClick}
+        disabled={isDisabled}
+      >
+        <FlaskConical size={18} />
       </button>
       <button
         className={`action-button ${venvMissing ? 'glow' : ''}`}
