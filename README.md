@@ -47,9 +47,50 @@ This application consists of two parts:
 - **Quick Actions**: Run dbt commands, compile models, and manage your project
 - **Local File Access**: No file uploads - backend reads files directly from your filesystem
 - **Git Integration**: View modified files, stage changes, commit, push/pull, and switch branches
+- **AI Assistant**: Agentic chat panel powered by Claude that explores, edits, compiles, tests and runs your dbt project (see below)
 - **MetaDV**: Visual Data Vault modeling - map source columns to entities and generate Data Vault 2.0 models using [metadv](https://pypi.org/project/metadv/) package
 
 **Note**: Only git-based dbt projects are supported. The project must be a git repository.
+
+## AI Assistant
+
+Click **Assistant** (bottom right) to open the agent panel. The assistant works on the open project with a set of tools:
+
+| Tool | What it does | Approval |
+|------|--------------|----------|
+| `list_files`, `read_file`, `search_files` | Explore the project | No |
+| `list_nodes`, `get_node`, `get_compiled_sql` | Read models, sources, columns, lineage and tests from `manifest.json` | No |
+| `run_dbt` (`parse`, `compile`, `ls`, `test`, `deps`, `debug`) | Validate and test changes | No |
+| `run_query` | Preview data with `dbt show --inline` | No |
+| `write_file`, `edit_file` | Create or change files (shown as a diff) | Yes |
+| `run_dbt` (`run`, `seed`, `build`, `snapshot`) | Materialize data in the warehouse | Yes |
+
+### Team mode
+
+Switch the panel to **Team** to have several agents work together. A lead agent explores the project, plans the work per model and dispatches tasks to specialized agents that run in parallel:
+
+| Role | Does |
+|------|------|
+| Test writer | Writes dbt unit tests and data tests first (test-driven), without touching model SQL |
+| Developer | Implements the model until its tests pass |
+| Reviewer | Reviews models and tests, runs them, reports findings (read-only) |
+| Documenter | Writes model and column descriptions |
+
+The default workflow is test-first: testers, then developers, then a reviewer; the lead reads the reports, dispatches follow-up work if needed, and summarizes. Each agent's progress appears in its own lane; approvals requested by any agent show up in its lane while the others keep working. dbt commands from parallel agents are queued on the project's operation lock.
+
+Actions that change files or the warehouse wait for your approval unless **Auto-approve** is checked. The file open in the editor is shared with the assistant as context (toggle the chip above the input). dbt commands use the target selected in the lineage panel and the project's environment variables.
+
+| Environment Variable | Default | Description |
+|---------------------|---------|-------------|
+| `ANTHROPIC_API_KEY` | | Anthropic API key used by the backend |
+| `DBT_UI__AGENT_ENABLED` | `true` | Set to `false` to hide the assistant |
+| `DBT_UI__AGENT_MODEL` | `claude-opus-5-5` | Claude model used by the assistant |
+| `DBT_UI__AGENT_EFFORT` | `high` | Reasoning effort: `low`, `medium`, `high`, `xhigh` or `max` |
+| `DBT_UI__AGENT_FALLBACKS` | `true` | Retry on a fallback model if the request is declined by safety classifiers |
+
+```bash
+ANTHROPIC_API_KEY=sk-ant-... docker-compose up --build
+```
 
 ## Want to Contribute?
 

@@ -1,6 +1,6 @@
 """Pydantic models for API request/response schemas."""
 from pydantic import BaseModel
-from typing import List, Optional, Dict
+from typing import Any, List, Optional, Dict
 
 
 class ProjectPath(BaseModel):
@@ -124,3 +124,23 @@ class GitPushPullRequest(BaseModel):
     password: str = ""  # Git password/token for HTTPS auth (optional)
     save_credentials: bool = True  # Whether to save credentials in cookie for future use
     use_stored: bool = False  # If true, use stored credentials from cookie
+
+
+class AgentChatRequest(BaseModel):
+    path: str  # Project path (worktree)
+    messages: List[Dict[str, Any]] = []  # Prior conversation history (Anthropic message format)
+    user_message: str = ""  # New user input (optional when resuming after an approval)
+    selected_file: str = ""  # File currently open in the editor, given to the agent as context
+    approvals: Dict[str, bool] = {}  # tool_use_id -> approved, for calls awaiting approval
+    auto_approve: bool = False  # Run file changes and warehouse-mutating dbt commands without asking
+    target: str = ""  # dbt target to use
+
+
+class AgentApprovalRequest(BaseModel):
+    session_id: str  # Team run session
+    tool_id: str  # tool_use id awaiting approval
+    approved: bool
+
+
+class AgentSessionRequest(BaseModel):
+    session_id: str

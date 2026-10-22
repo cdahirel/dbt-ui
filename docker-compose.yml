@@ -11,6 +11,8 @@ x-shared-env: &shared-env
   DBT_UI__METADV_ENABLED: ${DBT_UI__METADV_ENABLED:-true}
   # Git credentials cookie max age in seconds (default: 30 days)
   DBT_UI__BACKEND_GIT_CREDS_COOKIE_MAX_AGE: ${DBT_UI__BACKEND_GIT_CREDS_COOKIE_MAX_AGE:-2592000}
+  # AI assistant (default: enabled; needs ANTHROPIC_API_KEY to reach Claude)
+  DBT_UI__AGENT_ENABLED: ${DBT_UI__AGENT_ENABLED:-true}
   # Backend-specific
   PYTHONUNBUFFERED: 1
   # Frontend URL for CORS (default: http://localhost for Docker)
@@ -30,6 +32,9 @@ services:
       - ${DBT_UI__GIT_REPOS_PATH:-./git-repos}:/home/dbtui/git-repos
     environment:
       <<: *shared-env
+      ANTHROPIC_API_KEY: ${ANTHROPIC_API_KEY:-}
+      DBT_UI__AGENT_MODEL: ${DBT_UI__AGENT_MODEL:-claude-opus-5-5}
+      DBT_UI__AGENT_EFFORT: ${DBT_UI__AGENT_EFFORT:-high}
 
   frontend:
     build:

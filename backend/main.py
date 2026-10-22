@@ -10,7 +10,13 @@ from routes.dbt_routes import router as dbt_router
 from routes.venv_routes import router as venv_router
 from routes.env_routes import router as env_router
 from routes.metadv_routes import router as metadv_router
+from routes.agent_routes import router as agent_router
 from auth import verify_credentials, is_auth_enabled
+
+def is_agent_enabled() -> bool:
+    """Check if the AI assistant feature is enabled via environment variable."""
+    return os.environ.get("DBT_UI__AGENT_ENABLED", "true").lower() in ("true", "1", "yes")
+
 
 def is_metadv_enabled() -> bool:
     """Check if MetaDV feature is enabled via environment variable."""
@@ -58,6 +64,10 @@ app.include_router(env_router, dependencies=auth_dependency)
 # Only include MetaDV router if the feature is enabled
 if is_metadv_enabled():
     app.include_router(metadv_router, dependencies=auth_dependency)
+
+# Only include the AI assistant router if the feature is enabled
+if is_agent_enabled():
+    app.include_router(agent_router, dependencies=auth_dependency)
 
 
 @app.get("/")

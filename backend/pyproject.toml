@@ -11,6 +11,7 @@ dependencies = [
     "pyyaml>=6.0",
     "packaging>=23.0",
     "metadv>=0.1.0",
+    "anthropic>=2.1.0",
 ]
 
 [tool.uv]
