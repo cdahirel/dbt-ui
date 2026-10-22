@@ -134,3 +134,13 @@ class AgentChatRequest(BaseModel):
     approvals: Dict[str, bool] = {}  # tool_use_id -> approved, for calls awaiting approval
     auto_approve: bool = False  # Run file changes and warehouse-mutating dbt commands without asking
     target: str = ""  # dbt target to use
+
+
+class AgentApprovalRequest(BaseModel):
+    session_id: str  # Team run session
+    tool_id: str  # tool_use id awaiting approval
+    approved: bool
+
+
+class AgentSessionRequest(BaseModel):
+    session_id: str

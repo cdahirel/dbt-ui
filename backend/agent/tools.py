@@ -8,6 +8,7 @@ import fnmatch
 import os
 import re
 import subprocess
+import time
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, Callable, Dict, List, Optional
@@ -39,6 +40,8 @@ class ToolContext:
     project_path: Path
     env_vars: Dict[str, str]
     target: str = ""
+    # How long a dbt command waits for another operation on the worktree to finish
+    lock_wait_seconds: int = 0
 
 
 @dataclass
@@ -323,8 +326,11 @@ def run_query(ctx: ToolContext, args: Dict[str, Any]) -> str:
 def run_locked(ctx: ToolContext, cmd: List[str], operation: str, timeout: int) -> str:
     """Run a dbt command while holding the worktree lock shared with the rest of the UI."""
     path_str = str(ctx.project_path)
-    if not acquire_lock(path_str, operation):
-        raise ToolError(f"Another operation is already running: {get_lock_status(path_str)['operation']}. Try again later.")
+    deadline = time.monotonic() + ctx.lock_wait_seconds
+    while not acquire_lock(path_str, operation):
+        if time.monotonic() >= deadline:
+            raise ToolError(f"Another operation is already running: {get_lock_status(path_str)['operation']}. Try again later.")
+        time.sleep(1)
     try:
         result = run_command(cmd, ctx.project_path, timeout=timeout, env=get_dbt_env(ctx.project_path, ctx.env_vars))
     except subprocess.TimeoutExpired:
@@ -487,10 +493,10 @@ TOOLS: List[ToolSpec] = [
 
 TOOLS_BY_NAME = {tool.name: tool for tool in TOOLS}
 
-_JSON_TYPES = {"string": str, "integer": int, "boolean": bool, "object": dict}
+_JSON_TYPES = {"string": str, "integer": int, "boolean": bool, "object": dict, "array": list}
 
 
-def validate_input(spec: ToolSpec, args: Any) -> Optional[str]:
+def validate_input(spec: Any, args: Any) -> Optional[str]:
     """Validate tool input against its schema. Returns an error message or None.
 
     Tool inputs are streamed eagerly, so the API does not validate them for us.

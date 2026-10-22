@@ -1,14 +1,16 @@
-// AI assistant panel: chat with an agent that can explore, edit, compile, test and run the dbt project
+// AI assistant panel: chat with an agent (or a team of agents) that can explore, edit, compile,
+// test and run the dbt project
 
 import { useState, useEffect, useRef, KeyboardEvent } from 'react'
-import ReactMarkdown from 'react-markdown'
-import { Sparkles, X, MessageSquarePlus, Send, Square, Brain, ChevronRight, ChevronDown, FileText, AlertTriangle } from 'lucide-react'
+import { Sparkles, X, MessageSquarePlus, Send, Square, FileText, AlertTriangle, Users, Bot } from 'lucide-react'
 import { apiUrl, apiFetch } from '../../config/api'
-import { AgentEvent, ApiMessage, DisplayItem, ToolItem } from './agentTypes'
-import ToolCallCard from './ToolCallCard'
+import { AgentEvent, AgentMode, AgentRun, ApiMessage, DisplayItem, ToolItem } from './agentTypes'
+import { applyItemEvent, interruptTools } from './agentEvents'
+import AgentItems from './AgentItems'
 import './AgentPanel.css'
 
 const AUTO_APPROVE_KEY = 'dbt-ui-agent-auto-approve'
+const MODE_KEY = 'dbt-ui-agent-mode'
 
 const SUGGESTIONS_WITH_FILE = [
   'Explain what this model does and how it fits in the lineage',
@@ -20,6 +22,15 @@ const SUGGESTIONS = [
   'Which models have no tests or documentation?',
   'Compile the project and fix any errors',
 ]
+const TEAM_SUGGESTIONS_WITH_FILE = [
+  'Refactor this model test-first: write unit tests, then implement, then review',
+  'Add tests and documentation for this model and everything downstream of it',
+]
+const TEAM_SUGGESTIONS = [
+  'Add tests and documentation to every model in the staging layer',
+  'Create a mart model for monthly revenue per customer, test-first',
+  'Review the marts layer and fix what the reviewer finds',
+]
 
 interface AgentPanelProps {
   projectPath: string
@@ -30,35 +41,38 @@ interface AgentPanelProps {
   onProjectChanged: (changedPath?: string) => void
 }
 
-function ThinkingBlock({ text }: { text: string }) {
-  const [open, setOpen] = useState(false)
-  if (!text.trim()) return null
-  return (
-    <div className="agent-thinking">
-      <button className="agent-thinking-toggle" onClick={() => setOpen(!open)}>
-        {open ? <ChevronDown size={12} /> : <ChevronRight size={12} />}
-        <Brain size={12} /> Thinking
-      </button>
-      {open && <div className="agent-thinking-text">{text}</div>}
-    </div>
-  )
+function readPreference(key: string): string | null {
+  try {
+    return localStorage.getItem(key)
+  } catch {
+    return null
+  }
+}
+
+function writePreference(key: string, value: string) {
+  try {
+    localStorage.setItem(key, value)
+  } catch {
+    // Preference is just not remembered
+  }
+}
+
+function setToolDecision(items: DisplayItem[], toolId: string, approved: boolean): DisplayItem[] {
+  return items.map(item => (item.kind === 'tool' && item.id === toolId ? { ...item, decision: approved } : item))
 }
 
 function AgentPanel({ projectPath, selectedFile, selectedTarget, onClose, onProjectChanged }: AgentPanelProps) {
+  const [mode, setMode] = useState<AgentMode>(() => (readPreference(MODE_KEY) === 'team' ? 'team' : 'assistant'))
   const [history, setHistory] = useState<ApiMessage[]>([])
   const [items, setItems] = useState<DisplayItem[]>([])
+  const [agents, setAgents] = useState<AgentRun[]>([])
   const [input, setInput] = useState('')
   const [isRunning, setIsRunning] = useState(false)
   const [includeFile, setIncludeFile] = useState(true)
   const [status, setStatus] = useState<{ configured: boolean; model: string } | null>(null)
-  const [autoApprove, setAutoApprove] = useState(() => {
-    try {
-      return localStorage.getItem(AUTO_APPROVE_KEY) === 'true'
-    } catch {
-      return false
-    }
-  })
+  const [autoApprove, setAutoApprove] = useState(() => readPreference(AUTO_APPROVE_KEY) === 'true')
   const abortRef = useRef<AbortController | null>(null)
+  const sessionRef = useRef<string | null>(null)  // Team run id, for approvals and cancellation
   const scrollRef = useRef<HTMLDivElement | null>(null)
   const historyRef = useRef<ApiMessage[]>([])
   historyRef.current = history
@@ -70,101 +84,90 @@ function AgentPanel({ projectPath, selectedFile, selectedTarget, onClose, onProj
       .catch(err => console.error('[AgentPanel] Error loading assistant status:', err))
   }, [])
 
-  // New project: start a new conversation
-  useEffect(() => {
+  const stop = () => {
+    if (sessionRef.current) {
+      apiFetch(apiUrl('/api/agent/cancel'), {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ session_id: sessionRef.current }),
+      }).catch(err => console.error('[AgentPanel] Error cancelling team run:', err))
+    }
     abortRef.current?.abort()
+  }
+
+  const newConversation = () => {
+    stop()
     setHistory([])
     setItems([])
+    setAgents([])
+  }
+
+  // New project: start a new conversation
+  useEffect(() => {
+    newConversation()
   }, [projectPath])
 
   useEffect(() => {
     scrollRef.current?.scrollTo({ top: scrollRef.current.scrollHeight })
-  }, [items])
+  }, [items, agents])
 
   const toggleAutoApprove = () => {
-    const next = !autoApprove
-    setAutoApprove(next)
-    try {
-      localStorage.setItem(AUTO_APPROVE_KEY, String(next))
-    } catch {
-      // Preference is just not remembered
-    }
+    setAutoApprove(!autoApprove)
+    writePreference(AUTO_APPROVE_KEY, String(!autoApprove))
   }
 
-  const updateTool = (id: string, update: Partial<ToolItem>) => {
-    setItems(prev => prev.map(item => (item.kind === 'tool' && item.id === id ? { ...item, ...update } : item)))
-  }
-
-  // Append streamed text to the latest item of the given kind
-  const appendToLast = (kind: 'text' | 'thinking', text: string) => {
-    setItems(prev => {
-      for (let i = prev.length - 1; i >= 0; i--) {
-        const item = prev[i]
-        if (item.kind === kind) {
-          const next = [...prev]
-          next[i] = { ...item, text: item.text + text }
-          return next
-        }
-      }
-      return [...prev, { kind, text }]
-    })
+  // The two modes use different tools, so switching starts a new conversation
+  const switchMode = (next: AgentMode) => {
+    if (next === mode || isRunning) return
+    newConversation()
+    setMode(next)
+    writePreference(MODE_KEY, next)
   }
 
   const handleEvent = (event: AgentEvent) => {
-    switch (event.type) {
-      case 'block_start':
-        if (event.block_type === 'text') {
-          setItems(prev => [...prev, { kind: 'text', text: '' }])
-        } else if (event.block_type === 'thinking') {
-          setItems(prev => [...prev, { kind: 'thinking', text: '' }])
-        } else if (event.block_type === 'tool_use' && event.id && event.name) {
-          setItems(prev => [...prev, { kind: 'tool', id: event.id!, name: event.name!, status: 'streaming' }])
-        }
-        break
-      case 'text_delta':
-        appendToLast('text', event.text)
-        break
-      case 'thinking_delta':
-        appendToLast('thinking', event.text)
-        break
-      case 'tool_use':
-        updateTool(event.id, { input: event.input, status: 'queued' })
-        break
-      case 'approval_required':
-        event.tools.forEach(tool => updateTool(tool.id, { status: 'awaiting' }))
-        break
-      case 'tool_running':
-        updateTool(event.id, { status: 'running' })
-        break
-      case 'tool_result': {
-        const declined = event.is_error && event.content === 'The user declined this action.'
-        updateTool(event.id, { status: declined ? 'declined' : event.is_error ? 'error' : 'done', result: event.content })
-        break
-      }
-      case 'project_changed':
-        onProjectChanged(event.path)
-        break
-      case 'messages':
-        setHistory(event.messages)
-        break
-      case 'notice':
-        setItems(prev => [...prev, { kind: 'notice', text: event.message }])
-        break
-      case 'error':
-        setItems(prev => [...prev, { kind: 'error', text: event.message }])
-        break
-      case 'done':
-        break
+    const agentId = event.agent && event.agent !== 'lead' ? event.agent : null
+
+    if (event.type === 'agent_start' && agentId) {
+      setAgents(prev => [...prev, {
+        id: agentId, role: event.role, label: event.label, title: event.title,
+        parentToolId: event.parent_tool_id, status: 'running', items: [],
+      }])
+      return
+    }
+    if (event.type === 'agent_done' && agentId) {
+      setAgents(prev => prev.map(agent => (agent.id === agentId
+        ? { ...agent, status: event.status, summary: event.summary, items: interruptTools(agent.items) }
+        : agent)))
+      return
+    }
+    if (event.type === 'session') {
+      sessionRef.current = event.session_id
+      return
+    }
+    if (event.type === 'project_changed') {
+      onProjectChanged(event.path)
+      return
+    }
+    if (event.type === 'messages') {
+      setHistory(event.messages)
+      return
+    }
+
+    if (agentId) {
+      setAgents(prev => prev.map(agent => (agent.id === agentId ? { ...agent, items: applyItemEvent(agent.items, event) } : agent)))
+    } else {
+      setItems(prev => applyItemEvent(prev, event))
     }
   }
 
   const runAgent = async (body: { user_message?: string; approvals?: Record<string, boolean>; selected_file?: string }) => {
     const controller = new AbortController()
     abortRef.current = controller
+    sessionRef.current = null
     setIsRunning(true)
 
     try {
-      const response = await apiFetch(apiUrl('/api/agent/chat'), {
+      const response = await apiFetch(apiUrl(mode === 'team' ? '/api/agent/team' : '/api/agent/chat'), {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         credentials: 'include',
@@ -205,16 +208,14 @@ function AgentPanel({ projectPath, selectedFile, selectedTarget, onClose, onProj
         handleEvent({ type: 'error', message: 'Error connecting to backend' })
       }
     } finally {
-      // Tool calls left unfinished by an interruption
-      setItems(prev =>
-        prev.map(item =>
-          item.kind === 'tool' && ['streaming', 'queued', 'running'].includes(item.status)
-            ? { ...item, status: 'error', result: item.result ?? 'Interrupted' }
-            : item,
-        ),
-      )
+      // Work left unfinished by an interruption
+      setItems(prev => interruptTools(prev))
+      setAgents(prev => prev.map(agent => (agent.status === 'running'
+        ? { ...agent, status: 'cancelled', items: interruptTools(agent.items) }
+        : agent)))
       setIsRunning(false)
       abortRef.current = null
+      sessionRef.current = null
     }
   }
 
@@ -231,8 +232,9 @@ function AgentPanel({ projectPath, selectedFile, selectedTarget, onClose, onProj
     runAgent({ user_message: message, selected_file: contextFile })
   }
 
-  const handleDecision = (toolId: string, approved: boolean) => {
-    const updated = items.map(item => (item.kind === 'tool' && item.id === toolId ? { ...item, decision: approved } : item))
+  // Assistant mode: the run has stopped; resume it once every pending call has a decision
+  const handleAssistantDecision = (toolId: string, approved: boolean) => {
+    const updated = setToolDecision(items, toolId, approved)
     setItems(updated)
     const awaiting = updated.filter((item): item is ToolItem => item.kind === 'tool' && item.status === 'awaiting')
     if (awaiting.every(item => item.decision !== undefined)) {
@@ -241,6 +243,22 @@ function AgentPanel({ projectPath, selectedFile, selectedTarget, onClose, onProj
     }
   }
 
+  // Team mode: the agent is blocked waiting; send the decision to the live run
+  const handleTeamDecision = (toolId: string, approved: boolean) => {
+    if (!sessionRef.current) return
+    setItems(prev => setToolDecision(prev, toolId, approved))
+    setAgents(prev => prev.map(agent => ({ ...agent, items: setToolDecision(agent.items, toolId, approved) })))
+    apiFetch(apiUrl('/api/agent/approve'), {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ session_id: sessionRef.current, tool_id: toolId, approved }),
+    }).catch(err => console.error('[AgentPanel] Error sending approval:', err))
+  }
+
+  const onDecision = mode === 'team'
+    ? (isRunning ? handleTeamDecision : undefined)
+    : (isRunning ? undefined : handleAssistantDecision)
+
   const handleKeyDown = (e: KeyboardEvent<HTMLTextAreaElement>) => {
     if (e.key === 'Enter' && !e.shiftKey) {
       e.preventDefault()
@@ -248,19 +266,24 @@ function AgentPanel({ projectPath, selectedFile, selectedTarget, onClose, onProj
     }
   }
 
-  const newConversation = () => {
-    abortRef.current?.abort()
-    setHistory([])
-    setItems([])
-  }
-
-  const suggestions = selectedFile && includeFile ? SUGGESTIONS_WITH_FILE : SUGGESTIONS
+  const withFile = Boolean(selectedFile && includeFile)
+  const suggestions = mode === 'team'
+    ? (withFile ? TEAM_SUGGESTIONS_WITH_FILE : TEAM_SUGGESTIONS)
+    : (withFile ? SUGGESTIONS_WITH_FILE : SUGGESTIONS)
 
   return (
     <div className="agent-panel">
       <div className="agent-header">
         <Sparkles size={15} className="agent-header-icon" />
-        <span className="agent-title">Assistant</span>
+        <div className="agent-mode-toggle" title={isRunning ? 'Stop the current run to switch mode' : undefined}>
+          <button className={mode === 'assistant' ? 'active' : ''} onClick={() => switchMode('assistant')} disabled={isRunning}>
+            <Bot size={12} /> Assistant
+          </button>
+          <button className={mode === 'team' ? 'active' : ''} onClick={() => switchMode('team')} disabled={isRunning}>
+            <Users size={12} /> Team
+          </button>
+        </div>
+        <span className="agent-header-spacer" />
         <label className="agent-auto-approve" title="Apply file changes and run dbt run/seed/build without asking">
           <input type="checkbox" checked={autoApprove} onChange={toggleAutoApprove} />
           Auto-approve
@@ -283,8 +306,12 @@ function AgentPanel({ projectPath, selectedFile, selectedTarget, onClose, onProj
       <div className="agent-messages" ref={scrollRef}>
         {items.length === 0 && (
           <div className="agent-empty">
-            <Sparkles size={28} />
-            <p>Ask about your project, or have the assistant write models, tests and docs, then compile and validate them.</p>
+            {mode === 'team' ? <Users size={28} /> : <Sparkles size={28} />}
+            <p>
+              {mode === 'team'
+                ? 'A lead agent plans the work per model and dispatches test writers, developers, reviewers and documenters that work in parallel, test-first.'
+                : 'Ask about your project, or have the assistant write models, tests and docs, then compile and validate them.'}
+            </p>
             <div className="agent-suggestions">
               {suggestions.map(suggestion => (
                 <button key={suggestion} className="agent-suggestion" onClick={() => sendMessage(suggestion)}>
@@ -295,39 +322,7 @@ function AgentPanel({ projectPath, selectedFile, selectedTarget, onClose, onProj
           </div>
         )}
 
-        {items.map((item, index) => {
-          switch (item.kind) {
-            case 'user':
-              return (
-                <div key={index} className="agent-user-msg">
-                  {item.context && (
-                    <div className="agent-user-context">
-                      <FileText size={11} /> {item.context}
-                    </div>
-                  )}
-                  {item.text}
-                </div>
-              )
-            case 'text':
-              return item.text ? (
-                <div key={index} className="agent-assistant-msg">
-                  <ReactMarkdown>{item.text}</ReactMarkdown>
-                </div>
-              ) : null
-            case 'thinking':
-              return <ThinkingBlock key={index} text={item.text} />
-            case 'tool':
-              return <ToolCallCard key={item.id} item={item} onDecision={isRunning ? undefined : handleDecision} />
-            case 'error':
-              return (
-                <div key={index} className="agent-error">
-                  <AlertTriangle size={13} /> {item.text}
-                </div>
-              )
-            case 'notice':
-              return <div key={index} className="agent-notice">{item.text}</div>
-          }
-        })}
+        <AgentItems items={items} agents={agents} onDecision={onDecision} />
 
         {isRunning && <div className="agent-working"><span /><span /><span /></div>}
       </div>
@@ -345,14 +340,14 @@ function AgentPanel({ projectPath, selectedFile, selectedTarget, onClose, onProj
         <div className="agent-input-row">
           <textarea
             className="agent-input"
-            placeholder="Ask the assistant…"
+            placeholder={mode === 'team' ? 'Describe the work for the team…' : 'Ask the assistant…'}
             value={input}
             onChange={e => setInput(e.target.value)}
             onKeyDown={handleKeyDown}
             rows={3}
           />
           {isRunning ? (
-            <button className="agent-send-btn" onClick={() => abortRef.current?.abort()} title="Stop">
+            <button className="agent-send-btn" onClick={stop} title="Stop">
               <Square size={14} />
             </button>
           ) : (

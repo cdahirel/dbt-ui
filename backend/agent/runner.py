@@ -76,7 +76,7 @@ Communication:
 - Use Markdown; put SQL and YAML in fenced code blocks."""
 
 
-def _sanitize_assistant_content(content: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
+def sanitize_assistant_content(content: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
     """Prepare an assistant turn for the history.
 
     After a mid-output refusal fallback, thinking and tool_use blocks emitted before the
@@ -152,13 +152,17 @@ def _needs_approval(tool_uses: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
     return gated
 
 
-def _stream_turn(system: str, messages: List[Dict[str, Any]]) -> Generator[Event, None, Any]:
+def stream_turn(
+    system: str,
+    messages: List[Dict[str, Any]],
+    tools: Optional[List[Dict[str, Any]]] = None,
+) -> Generator[Event, None, Any]:
     """Stream one model response, yielding UI events. Returns the final message."""
     params: Dict[str, Any] = dict(
         model=MODEL,
         max_tokens=MAX_TOKENS,
         system=system,
-        tools=tool_definitions(),
+        tools=tools if tools is not None else tool_definitions(),
         messages=messages,
         thinking={"type": "adaptive", "display": "summarized"},
         output_config={"effort": EFFORT},
@@ -214,7 +218,7 @@ def run_agent(
         json_retries = 0
         for _ in range(MAX_TURNS):
             try:
-                final = yield from _stream_turn(system, messages)
+                final = yield from stream_turn(system, messages)
                 json_retries = 0
             except ValueError:
                 # The SDK could not parse a streamed tool input at all; re-issue the turn
@@ -224,7 +228,7 @@ def run_agent(
                 yield {"type": "notice", "message": "Malformed tool input received, retrying..."}
                 continue
 
-            content = _sanitize_assistant_content([block.to_dict(mode="json") for block in final.content])
+            content = sanitize_assistant_content([block.to_dict(mode="json") for block in final.content])
             messages.append({"role": "assistant", "content": content})
 
             if final.stop_reason == "pause_turn":
@@ -263,16 +267,21 @@ def run_agent(
         yield {"type": "messages", "messages": messages}
         yield {"type": "error", "message": f"Stopped after {MAX_TURNS} steps. Send a message to continue."}
 
-    except anthropic.AuthenticationError:
-        yield {"type": "error", "message": "Anthropic authentication failed. Set ANTHROPIC_API_KEY for the backend."}
-    except anthropic.RateLimitError:
-        yield {"type": "error", "message": "Rate limited by the Anthropic API. Please retry in a moment."}
-    except anthropic.BadRequestError as e:
-        yield {"type": "error", "message": f"Invalid request: {e.message}"}
-    except anthropic.APIStatusError as e:
-        yield {"type": "error", "message": f"Anthropic API error ({e.status_code}): {e.message}"}
-    except anthropic.APIConnectionError:
-        yield {"type": "error", "message": "Could not reach the Anthropic API."}
     except anthropic.AnthropicError as e:
-        # e.g. missing credentials when the client is created
-        yield {"type": "error", "message": str(e)}
+        yield {"type": "error", "message": describe_api_error(e)}
+
+
+def describe_api_error(e: anthropic.AnthropicError) -> str:
+    """User-facing message for an Anthropic SDK error."""
+    if isinstance(e, anthropic.AuthenticationError):
+        return "Anthropic authentication failed. Set ANTHROPIC_API_KEY for the backend."
+    if isinstance(e, anthropic.RateLimitError):
+        return "Rate limited by the Anthropic API. Please retry in a moment."
+    if isinstance(e, anthropic.BadRequestError):
+        return f"Invalid request: {e.message}"
+    if isinstance(e, anthropic.APIStatusError):
+        return f"Anthropic API error ({e.status_code}): {e.message}"
+    if isinstance(e, anthropic.APIConnectionError):
+        return "Could not reach the Anthropic API."
+    # e.g. missing credentials when the client is created
+    return str(e)

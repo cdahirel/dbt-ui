@@ -65,6 +65,19 @@ Click **Assistant** (bottom right) to open the agent panel. The assistant works 
 | `write_file`, `edit_file` | Create or change files (shown as a diff) | Yes |
 | `run_dbt` (`run`, `seed`, `build`, `snapshot`) | Materialize data in the warehouse | Yes |
 
+### Team mode
+
+Switch the panel to **Team** to have several agents work together. A lead agent explores the project, plans the work per model and dispatches tasks to specialized agents that run in parallel:
+
+| Role | Does |
+|------|------|
+| Test writer | Writes dbt unit tests and data tests first (test-driven), without touching model SQL |
+| Developer | Implements the model until its tests pass |
+| Reviewer | Reviews models and tests, runs them, reports findings (read-only) |
+| Documenter | Writes model and column descriptions |
+
+The default workflow is test-first: testers, then developers, then a reviewer; the lead reads the reports, dispatches follow-up work if needed, and summarizes. Each agent's progress appears in its own lane; approvals requested by any agent show up in its lane while the others keep working. dbt commands from parallel agents are queued on the project's operation lock.
+
 Actions that change files or the warehouse wait for your approval unless **Auto-approve** is checked. The file open in the editor is shared with the assistant as context (toggle the chip above the input). dbt commands use the target selected in the lineage panel and the project's environment variables.
 
 | Environment Variable | Default | Description |

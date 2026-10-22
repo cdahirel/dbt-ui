@@ -24,8 +24,25 @@ export type DisplayItem =
 
 export type ToolItem = Extract<DisplayItem, { kind: 'tool' }>
 
-// Events streamed by POST /api/agent/chat (see backend/agent/runner.py)
-export type AgentEvent =
+// A sub-agent of a team run
+export type AgentRunStatus = 'running' | 'done' | 'error' | 'cancelled'
+
+export interface AgentRun {
+  id: string
+  role: string
+  label: string
+  title: string
+  parentToolId: string
+  status: AgentRunStatus
+  items: DisplayItem[]
+  summary?: string
+}
+
+export type AgentMode = 'assistant' | 'team'
+
+// Events streamed by POST /api/agent/chat and /api/agent/team (see backend/agent/runner.py
+// and backend/agent/team.py). Team events carry the emitting agent: "lead" or a sub-agent id.
+export type AgentEvent = (
   | { type: 'block_start'; index: number; block_type: string; id?: string; name?: string }
   | { type: 'text_delta'; text: string }
   | { type: 'thinking_delta'; text: string }
@@ -38,3 +55,7 @@ export type AgentEvent =
   | { type: 'notice'; message: string }
   | { type: 'error'; message: string }
   | { type: 'done'; stop_reason: string }
+  | { type: 'session'; session_id: string }
+  | { type: 'agent_start'; role: string; label: string; title: string; parent_tool_id: string }
+  | { type: 'agent_done'; status: AgentRunStatus; summary: string }
+) & { agent?: string }

@@ -23,9 +23,148 @@
   color: #c586c0;
 }
 
-.agent-title {
-  font-weight: 600;
+.agent-header-spacer {
   flex: 1;
+}
+
+.agent-mode-toggle {
+  display: flex;
+  background-color: #1e1e1e;
+  border: 1px solid #3c3c3c;
+  border-radius: 5px;
+  padding: 2px;
+}
+
+.agent-mode-toggle button {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  background: none;
+  border: none;
+  color: #858585;
+  font-size: 12px;
+  padding: 3px 8px;
+  border-radius: 3px;
+  cursor: pointer;
+}
+
+.agent-mode-toggle button.active {
+  background-color: #37373d;
+  color: #ffffff;
+}
+
+.agent-mode-toggle button:disabled:not(.active) {
+  cursor: default;
+  opacity: 0.5;
+}
+
+.agent-team-run {
+  border: 1px solid #3c3c3c;
+  border-radius: 6px;
+  background-color: #1e1e1e;
+  padding: 6px;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.agent-team-run-header {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 12px;
+  color: #cccccc;
+  padding: 2px 2px 0;
+}
+
+.agent-team-run-count {
+  margin-left: auto;
+  color: #858585;
+  font-size: 11px;
+}
+
+.agent-lane {
+  border: 1px solid #333333;
+  border-radius: 5px;
+  background-color: #252526;
+}
+
+.agent-lane-awaiting {
+  border-color: #cca700;
+}
+
+.agent-lane-error {
+  border-color: rgba(244, 135, 113, 0.5);
+}
+
+.agent-lane-header {
+  width: 100%;
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 6px 8px;
+  background: none;
+  border: none;
+  color: #cccccc;
+  cursor: pointer;
+  font-size: 12px;
+  text-align: left;
+}
+
+.agent-lane-title {
+  flex: 1;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.agent-lane-activity {
+  padding: 0 8px 6px 27px;
+  font-size: 11px;
+  color: #858585;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.agent-lane-body {
+  border-top: 1px solid #333333;
+  padding: 8px;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.agent-role-badge {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  font-size: 11px;
+  padding: 1px 6px;
+  border-radius: 8px;
+  flex-shrink: 0;
+  background-color: #3c3c3c;
+  color: #cccccc;
+}
+
+.agent-role-tester {
+  background-color: rgba(220, 220, 170, 0.15);
+  color: #dcdcaa;
+}
+
+.agent-role-developer {
+  background-color: rgba(86, 156, 214, 0.18);
+  color: #9cdcfe;
+}
+
+.agent-role-reviewer {
+  background-color: rgba(197, 134, 192, 0.18);
+  color: #d7a6d3;
+}
+
+.agent-role-documenter {
+  background-color: rgba(115, 201, 145, 0.15);
+  color: #a6e3b8;
 }
 
 .agent-auto-approve {
