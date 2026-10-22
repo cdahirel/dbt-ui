@@ -26,7 +26,7 @@ export function describeTool(name: string, input: Record<string, unknown> = {}):
       const select = str(input.select)
       return {
         icon: <Play size={13} />,
-        label: `dbt ${str(input.command)}${select ? ` --select ${select}` : ''}${input.full_refresh ? ' --full-refresh' : ''}`,
+        label: `dbt ${str(input.command)}${select ? ` --select ${select}` : ''}${input.target ? ` --target ${str(input.target)}` : ''}${input.full_refresh ? ' --full-refresh' : ''}`,
       }
     }
     case 'run_query':

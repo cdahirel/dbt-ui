@@ -5,6 +5,9 @@ import { ChevronRight, ChevronDown, Loader2, Check, X, AlertTriangle, ShieldQues
 import { ToolItem } from './agentTypes'
 import { describeTool, str } from './toolLabels'
 
+// Commands that write to the warehouse (see MUTATING_DBT_COMMANDS in backend/agent/tools.py)
+const MUTATING_DBT_COMMANDS = ['run', 'seed', 'build', 'snapshot']
+
 interface ToolCallCardProps {
   item: ToolItem
   onDecision?: (toolId: string, approved: boolean) => void
@@ -41,7 +44,16 @@ function ApprovalPreview({ name, input }: { name: string; input: Record<string, 
     return <pre className="agent-tool-pre agent-diff-new">{str(input.content)}</pre>
   }
   if (name === 'run_dbt') {
-    return <div className="agent-approval-note">This command materializes data in the warehouse.</div>
+    const target = input.target
+      ? <> on target <strong className="agent-approval-target">{str(input.target)}</strong></>
+      : ' on the target selected in the UI'
+    return (
+      <div className="agent-approval-note">
+        {MUTATING_DBT_COMMANDS.includes(str(input.command))
+          ? <>This command materializes data in the warehouse{target}{input.full_refresh ? ', with a full refresh' : ''}.</>
+          : <>Runs <code>dbt {str(input.command)}</code>{target}.</>}
+      </div>
+    )
   }
   return <pre className="agent-tool-pre">{JSON.stringify(input, null, 2)}</pre>
 }

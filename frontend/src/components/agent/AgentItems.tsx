@@ -5,7 +5,7 @@ import ReactMarkdown, { Components, Options } from 'react-markdown'
 import remarkGfm from 'remark-gfm'
 import {
   Brain, ChevronRight, ChevronDown, FileText, AlertTriangle, Loader2, Check, X, Users,
-  FlaskConical, Code2, Eye, BookOpen, Bot,
+  FlaskConical, Code2, Eye, BookOpen, Bot, ServerCog,
 } from 'lucide-react'
 import { AgentRun, DisplayItem, ToolItem } from './agentTypes'
 import ToolCallCard from './ToolCallCard'
@@ -32,6 +32,16 @@ const ROLE_ICONS: Record<string, JSX.Element> = {
   developer: <Code2 size={13} />,
   reviewer: <Eye size={13} />,
   documenter: <BookOpen size={13} />,
+  ops: <ServerCog size={13} />,
+}
+
+const KNOWN_ROLES = new Set(Object.keys(ROLE_ICONS))
+
+// Default roles have fixed colors; custom roles get a stable color from their id
+function roleColorClass(role: string): string {
+  if (KNOWN_ROLES.has(role)) return `agent-role-${role}`
+  const hash = [...role].reduce((acc, char) => (acc * 31 + char.charCodeAt(0)) >>> 0, 0)
+  return `agent-role-c${hash % 5}`
 }
 
 function ThinkingBlock({ text }: { text: string }) {
@@ -77,7 +87,7 @@ function AgentLane({ agent, onDecision }: { agent: AgentRun; onDecision?: Decisi
     <div className={`agent-lane agent-lane-${agent.status} ${awaiting ? 'agent-lane-awaiting' : ''}`}>
       <button className="agent-lane-header" onClick={() => setOpen(!open)}>
         {expanded ? <ChevronDown size={13} /> : <ChevronRight size={13} />}
-        <span className={`agent-role-badge agent-role-${agent.role}`}>
+        <span className={`agent-role-badge ${roleColorClass(agent.role)}`}>
           {ROLE_ICONS[agent.role] ?? <Bot size={13} />} {agent.label}
         </span>
         <span className="agent-lane-title" title={agent.title}>{agent.title}</span>

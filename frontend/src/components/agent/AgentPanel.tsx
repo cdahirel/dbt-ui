@@ -2,15 +2,17 @@
 // test and run the dbt project
 
 import { useState, useEffect, useRef, KeyboardEvent } from 'react'
-import { Sparkles, X, MessageSquarePlus, Send, Square, FileText, AlertTriangle, Users, Bot } from 'lucide-react'
+import { Sparkles, X, MessageSquarePlus, Send, Square, FileText, AlertTriangle, Users, Bot, Settings2 } from 'lucide-react'
 import { apiUrl, apiFetch } from '../../config/api'
-import { AgentEvent, AgentMode, AgentRun, ApiMessage, DisplayItem, ToolItem } from './agentTypes'
+import { AgentEvent, AgentMode, AgentRun, ApiMessage, DisplayItem, TeamsInfo, ToolItem } from './agentTypes'
 import { applyItemEvent, interruptTools } from './agentEvents'
 import AgentItems from './AgentItems'
+import TeamEditorModal from './TeamEditorModal'
 import './AgentPanel.css'
 
 const AUTO_APPROVE_KEY = 'dbt-ui-agent-auto-approve'
 const MODE_KEY = 'dbt-ui-agent-mode'
+const TEAM_KEY = 'dbt-ui-agent-team'
 
 const SUGGESTIONS_WITH_FILE = [
   'Explain what this model does and how it fits in the lineage',
@@ -71,6 +73,9 @@ function AgentPanel({ projectPath, selectedFile, selectedTarget, onClose, onProj
   const [includeFile, setIncludeFile] = useState(true)
   const [status, setStatus] = useState<{ configured: boolean; model: string } | null>(null)
   const [autoApprove, setAutoApprove] = useState(() => readPreference(AUTO_APPROVE_KEY) === 'true')
+  const [teamsInfo, setTeamsInfo] = useState<TeamsInfo | null>(null)
+  const [teamId, setTeamId] = useState('')
+  const [showTeamEditor, setShowTeamEditor] = useState(false)
   const abortRef = useRef<AbortController | null>(null)
   const sessionRef = useRef<string | null>(null)  // Team run id, for approvals and cancellation
   const scrollRef = useRef<HTMLDivElement | null>(null)
@@ -107,9 +112,38 @@ function AgentPanel({ projectPath, selectedFile, selectedTarget, onClose, onProj
     setAgents([])
   }
 
+  // Teams are stored per project; fall back to the default team if the selected one is gone
+  const loadTeamsSeq = useRef(0)
+  const loadTeams = async (selectTeamId?: string) => {
+    const seq = ++loadTeamsSeq.current
+    try {
+      const response = await apiFetch(apiUrl('/api/agent/teams'), {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ path: projectPath }),
+      })
+      if (!response.ok) return
+      const data: TeamsInfo = await response.json()
+      // A newer request (e.g. after switching project) wins
+      if (seq !== loadTeamsSeq.current) return
+      setTeamsInfo(data)
+      const wanted = selectTeamId ?? readPreference(`${TEAM_KEY}:${projectPath}`) ?? ''
+      selectTeam(data.teams.some(team => team.id === wanted) ? wanted : data.default_team_id)
+    } catch (err) {
+      console.error('[AgentPanel] Error loading agent teams:', err)
+    }
+  }
+
+  const selectTeam = (id: string) => {
+    setTeamId(id)
+    // Custom teams belong to a project, so the choice is remembered per project
+    writePreference(`${TEAM_KEY}:${projectPath}`, id)
+  }
+
   // New project: start a new conversation
   useEffect(() => {
     newConversation()
+    loadTeams()
   }, [projectPath])
 
   useEffect(() => {
@@ -127,6 +161,13 @@ function AgentPanel({ projectPath, selectedFile, selectedTarget, onClose, onProj
     newConversation()
     setMode(next)
     writePreference(MODE_KEY, next)
+  }
+
+  // Roles differ between teams, so switching team starts a new conversation
+  const switchTeam = (id: string) => {
+    if (id === teamId || isRunning) return
+    newConversation()
+    selectTeam(id)
   }
 
   const handleEvent = (event: AgentEvent) => {
@@ -186,6 +227,7 @@ function AgentPanel({ projectPath, selectedFile, selectedTarget, onClose, onProj
           messages: historyRef.current,
           target: selectedTarget,
           auto_approve: autoApprove,
+          ...(mode === 'team' ? { team_id: teamId } : {}),
           ...body,
         }),
       })
@@ -277,6 +319,7 @@ function AgentPanel({ projectPath, selectedFile, selectedTarget, onClose, onProj
     }
   }
 
+  const currentTeam = teamsInfo?.teams.find(team => team.id === teamId)
   const withFile = Boolean(selectedFile && includeFile)
   const suggestions = mode === 'team'
     ? (withFile ? TEAM_SUGGESTIONS_WITH_FILE : TEAM_SUGGESTIONS)
@@ -307,6 +350,25 @@ function AgentPanel({ projectPath, selectedFile, selectedTarget, onClose, onProj
         </button>
       </div>
 
+      {mode === 'team' && teamsInfo && (
+        <div className="agent-team-bar">
+          <Users size={13} />
+          <select value={teamId} onChange={e => switchTeam(e.target.value)} disabled={isRunning} title="Agent team">
+            {teamsInfo.teams.map(team => (
+              <option key={team.id} value={team.id}>{team.name}{team.builtin ? ' (default)' : ''}</option>
+            ))}
+          </select>
+          <button
+            className="agent-icon-btn"
+            onClick={() => setShowTeamEditor(true)}
+            disabled={isRunning}
+            title={isRunning ? 'Stop the current run to edit teams' : 'Create or customize teams'}
+          >
+            <Settings2 size={14} />
+          </button>
+        </div>
+      )}
+
       {status && !status.configured && (
         <div className="agent-warning">
           <AlertTriangle size={14} />
@@ -320,7 +382,9 @@ function AgentPanel({ projectPath, selectedFile, selectedTarget, onClose, onProj
             {mode === 'team' ? <Users size={28} /> : <Sparkles size={28} />}
             <p>
               {mode === 'team'
-                ? 'A lead agent plans the work per model and dispatches test writers, developers, reviewers and documenters that work in parallel, test-first.'
+                ? `A lead agent plans the work and dispatches the team's agents (${
+                    currentTeam ? currentTeam.roles.map(role => role.label).join(', ') : '…'
+                  }), which work in parallel.`
                 : 'Ask about your project, or have the assistant write models, tests and docs, then compile and validate them.'}
             </p>
             <div className="agent-suggestions">
@@ -369,6 +433,19 @@ function AgentPanel({ projectPath, selectedFile, selectedTarget, onClose, onProj
         </div>
         {status?.model && <div className="agent-footer">{status.model}</div>}
       </div>
+      {showTeamEditor && teamsInfo && (
+        <TeamEditorModal
+          projectPath={projectPath}
+          info={teamsInfo}
+          selectedTeamId={teamId}
+          onClose={() => setShowTeamEditor(false)}
+          onChanged={id => {
+            // Saved or deleted: refresh the list and select the edited team
+            if (id !== teamId) newConversation()
+            loadTeams(id)
+          }}
+        />
+      )}
     </div>
   )
 }

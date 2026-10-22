@@ -30,6 +30,7 @@ SAFE_DBT_COMMANDS = {"parse", "compile", "ls", "test", "deps", "debug"}
 MUTATING_DBT_COMMANDS = {"run", "seed", "build", "snapshot"}
 
 SELECTOR_PATTERN = re.compile(r'^[a-zA-Z0-9_.:+\-*/,@\s]*$')
+TARGET_PATTERN = re.compile(r'^[a-zA-Z0-9_\-]{1,100}$')
 
 # Jinja allowed in run_query: only {{ ref('x') }} / {{ source('a', 'b') }}. Anything else
 # (e.g. {% do run_query(...) %}) would execute arbitrary SQL while dbt compiles the query.
@@ -57,10 +58,21 @@ class ToolSpec:
     description: str
     input_schema: Dict[str, Any]
     execute: Callable[[ToolContext, Dict[str, Any]], str]
-    # Returns True if this particular call needs user approval
+    # Returns True if this particular call needs user approval (skipped when auto-approve is on)
     needs_approval: Callable[[Dict[str, Any]], bool] = lambda args: False
+    # Returns True if this call needs approval even when auto-approve is on
+    always_ask: Callable[[Dict[str, Any]], bool] = lambda args: False
     # True if a successful call may change project files or dbt artifacts
     changes_project: Callable[[Dict[str, Any]], bool] = lambda args: False
+
+    @property
+    def may_need_approval(self) -> bool:
+        """Whether some calls of this tool can require approval (shown in the team editor)."""
+        return self.needs_approval is not ToolSpec.needs_approval
+
+    def must_ask(self, args: Dict[str, Any], auto_approve: bool) -> bool:
+        """Whether this call has to wait for the user's decision."""
+        return self.always_ask(args) or (self.needs_approval(args) and not auto_approve)
 
 
 def truncate(text: str, limit: int = MAX_TOOL_OUTPUT) -> str:
@@ -78,7 +90,8 @@ def resolve_in_project(ctx: ToolContext, rel_path: str) -> Path:
     target = (root / rel_path.strip().lstrip("/")).resolve()
     if target != root and not target.is_relative_to(root):
         raise ToolError("Path escapes the project directory")
-    if any(part in (".git", ".dbt-ui-venv") for part in target.relative_to(root).parts):
+    # .dbt-ui holds dbt-ui settings such as agent teams: agents must not change their own config
+    if any(part in (".git", ".dbt-ui-venv", ".dbt-ui") for part in target.relative_to(root).parts):
         raise ToolError("Access to this directory is not allowed")
     return target
 
@@ -309,11 +322,16 @@ def run_dbt(ctx: ToolContext, args: Dict[str, Any]) -> str:
     cmd = [dbt_executable(ctx), command, "--project-dir", str(ctx.project_path), "--profiles-dir", str(ctx.project_path)]
     if select and command not in ("parse", "deps", "debug"):
         cmd.extend(["--select", select])
-    if ctx.target and command != "deps":
-        cmd.extend(["--target", ctx.target])
+    # An explicit target (e.g. a deployment to prod) overrides the one selected in the UI
+    target = (args.get("target") or "").strip() or ctx.target
+    if target and not TARGET_PATTERN.match(target):
+        raise ToolError("Invalid target name")
+    if target and command != "deps":
+        cmd.extend(["--target", target])
     if args.get("full_refresh") and command in ("run", "seed", "build"):
         cmd.append("--full-refresh")
-    return run_locked(ctx, cmd, f"Assistant: dbt {command} {select}".strip(), timeout=600)
+    operation = f"Assistant: dbt {command} {select}".strip() + (f" (target {target})" if target else "")
+    return run_locked(ctx, cmd, operation, timeout=600)
 
 
 def run_query(ctx: ToolContext, args: Dict[str, Any]) -> str:
@@ -473,7 +491,7 @@ TOOLS: List[ToolSpec] = [
         description=(
             "Run a dbt command in the project. parse/compile/ls/test/deps/debug are read-only for the warehouse; "
             "run/seed/build/snapshot materialize data and require user approval. Use 'parse' after editing to validate, "
-            "and a selector to keep runs small."
+            "and a selector to keep runs small. Without `target`, the target selected in the UI is used."
         ),
         input_schema={
             "type": "object",
@@ -481,11 +499,14 @@ TOOLS: List[ToolSpec] = [
                 "command": {"type": "string", "enum": sorted(SAFE_DBT_COMMANDS | MUTATING_DBT_COMMANDS)},
                 "select": {"type": "string", "description": "dbt node selector, e.g. 'stg_orders+' or 'tag:daily'."},
                 "full_refresh": {"type": "boolean"},
+                "target": {"type": "string", "description": "profiles.yml target to use instead of the one selected in the UI, e.g. 'prod' for a deployment."},
             },
             "required": ["command"],
         },
         execute=run_dbt,
         needs_approval=lambda args: args.get("command") in MUTATING_DBT_COMMANDS,
+        # Any command on an explicitly chosen target (e.g. a prod deployment) is confirmed by the user
+        always_ask=lambda args: bool((args.get("target") or "").strip()),
         # ls/test/debug leave files and the manifest unchanged: no UI refresh needed
         changes_project=lambda args: args.get("command") not in ("ls", "test", "debug"),
     ),

@@ -59,3 +59,38 @@ export type AgentEvent = (
   | { type: 'agent_start'; role: string; label: string; title: string; parent_tool_id: string }
   | { type: 'agent_done'; status: AgentRunStatus; summary: string }
 ) & { agent?: string }
+
+// Team configuration (see backend/agent/teams.py)
+export interface TeamRole {
+  id: string
+  label: string
+  description: string
+  instructions: string
+  tools: string[]
+  model: string  // '' = the assistant's configured model
+  _key?: string  // Editor-only stable key; ignored by the backend
+}
+
+export interface AgentTeam {
+  id: string  // '' for a team not saved yet
+  name: string
+  description: string
+  workflow: string
+  roles: TeamRole[]
+  builtin?: boolean
+}
+
+export interface TeamToolInfo {
+  name: string
+  description: string
+  may_need_approval: boolean
+}
+
+export interface TeamsInfo {
+  teams: AgentTeam[]
+  default_team_id: string
+  tools: TeamToolInfo[]
+  models: string[]
+  default_model: string
+  max_roles: number
+}

@@ -19,6 +19,8 @@ MODEL = os.environ.get("DBT_UI__AGENT_MODEL", "claude-opus-5-5")
 EFFORT = os.environ.get("DBT_UI__AGENT_EFFORT", "high")
 # Server-side refusal fallback (re-runs a declined request on another model)
 FALLBACKS_ENABLED = os.environ.get("DBT_UI__AGENT_FALLBACKS", "true").lower() in ("true", "1", "yes")
+# Models that accept the server-side refusal fallback ("default" form)
+FALLBACK_MODELS = {"claude-fable-5-1", "claude-opus-5-5", "claude-opus-5", "claude-sonnet-5-5"}
 MAX_TOKENS = 64000
 MAX_TURNS = 30
 
@@ -137,7 +139,7 @@ def _execute_tools(
             output, is_error = f"Unknown tool: {name}", True
         elif (error := validate_input(spec, args)) is not None:
             output, is_error = f"Invalid input: {error}", True
-        elif spec.needs_approval(args) and not auto_approve and not approvals.get(tool_id, False):
+        elif spec.must_ask(args, auto_approve) and not approvals.get(tool_id, False):
             output, is_error = "The user declined this action.", True
         else:
             yield {"type": "tool_running", "id": tool_id, "name": name}
@@ -158,12 +160,12 @@ def _execute_tools(
     return results
 
 
-def _needs_approval(tool_uses: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
+def _needs_approval(tool_uses: List[Dict[str, Any]], auto_approve: bool) -> List[Dict[str, Any]]:
     gated = []
     for block in tool_uses:
         spec = TOOLS_BY_NAME.get(block["name"])
         args = block.get("input", {})
-        if spec and validate_input(spec, args) is None and spec.needs_approval(args):
+        if spec and validate_input(spec, args) is None and spec.must_ask(args, auto_approve):
             gated.append({"id": block["id"], "name": block["name"], "input": args})
     return gated
 
@@ -172,10 +174,12 @@ def stream_turn(
     system: str,
     messages: List[Dict[str, Any]],
     tools: Optional[List[Dict[str, Any]]] = None,
+    model: str = "",
 ) -> Generator[Event, None, Any]:
     """Stream one model response, yielding UI events. Returns the final message."""
+    model = model or MODEL
     params: Dict[str, Any] = dict(
-        model=MODEL,
+        model=model,
         max_tokens=MAX_TOKENS,
         system=system,
         tools=tools if tools is not None else tool_definitions(),
@@ -184,7 +188,8 @@ def stream_turn(
         output_config={"effort": EFFORT},
         cache_control={"type": "ephemeral"},
     )
-    if FALLBACKS_ENABLED:
+    # The configured model keeps the fallback as before; per-role models only when known to support it
+    if FALLBACKS_ENABLED and (model == MODEL or model in FALLBACK_MODELS):
         params["betas"] = ["server-side-fallback-2026-07-01"]
         params["fallbacks"] = "default"
 
@@ -273,7 +278,7 @@ def run_agent(
             for block in tool_uses:
                 yield {"type": "tool_use", "id": block["id"], "name": block["name"], "input": block.get("input", {})}
 
-            gated = [] if auto_approve else _needs_approval(tool_uses)
+            gated = _needs_approval(tool_uses, auto_approve)
             if gated:
                 yield {"type": "messages", "messages": messages}
                 yield {"type": "approval_required", "tools": gated}
