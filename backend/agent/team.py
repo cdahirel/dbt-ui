@@ -15,7 +15,7 @@ from typing import Any, Dict, List, Optional, Tuple
 
 import anthropic
 
-from agent.runner import build_system_prompt, describe_api_error, sanitize_assistant_content, stream_turn
+from agent.runner import build_system_prompt, close_dangling_tool_uses, describe_api_error, sanitize_assistant_content, stream_turn
 from agent.tools import TOOLS_BY_NAME, ToolContext, ToolError, ToolSpec, validate_input
 
 LEAD_MAX_TURNS = 30
@@ -212,11 +212,14 @@ class TeamSession:
         return result
 
     def run_loop(self, agent: str, system: str, allowed: List[str], messages: List[Dict[str, Any]], max_turns: int, lead: bool = False) -> List[Dict[str, Any]]:
-        """Run one agent until it stops calling tools. Returns its updated history."""
+        """Run one agent until it stops calling tools.
+
+        `messages` is updated in place, so the caller keeps the work done so far if the
+        loop is stopped or fails. Returns the same list.
+        """
         tools = [_tool_definition(TOOLS_BY_NAME[name]) for name in allowed]
         if lead:
             tools.append(_tool_definition(RUN_SUBAGENTS_SPEC))
-        messages = list(messages)
         json_retries = 0
 
         for _ in range(max_turns):
@@ -235,7 +238,7 @@ class TeamSession:
             except ValueError:
                 json_retries += 1
                 if json_retries > 2:
-                    raise
+                    raise ToolError("The model kept producing malformed tool input.")
                 self.emit(agent, {"type": "notice", "message": "Malformed tool input received, retrying..."})
                 continue
 
@@ -285,7 +288,8 @@ class TeamSession:
             if not isinstance(task, dict) or task.get("role") not in ROLES or not all(isinstance(task.get(k), str) and task.get(k) for k in ("title", "instructions")):
                 return f"Each task needs a role ({', '.join(ROLES)}), a title and instructions.", True
 
-        agents = [f"a{next(self._agent_ids)}" for _ in tasks]
+        # Ids are unique across the runs of a conversation (the UI keeps every run's lanes)
+        agents = [f"a{next(self._agent_ids)}-{self.id[:8]}" for _ in tasks]
         with ThreadPoolExecutor(max_workers=len(tasks)) as pool:
             reports = list(pool.map(lambda pair: self._run_subagent(pair[0], tool_id, pair[1]), zip(agents, tasks)))
         self._check_cancelled()
@@ -300,15 +304,19 @@ class TeamSession:
             history = list(messages) + [{"role": "user", "content": [{"type": "text", "text": user_message}]}]
             system = f"{self.system}\n\n{LEAD_GUIDELINES}"
             try:
-                history = self.run_loop("lead", system, LEAD_TOOLS, history, LEAD_MAX_TURNS, lead=True)
+                self.run_loop("lead", system, LEAD_TOOLS, history, LEAD_MAX_TURNS, lead=True)
                 self.emit("lead", {"type": "messages", "messages": history})
                 self.emit("lead", {"type": "done", "stop_reason": "end_turn"})
+                return
             except Cancelled:
-                self.emit("lead", {"type": "notice", "message": "Stopped."})
+                failure = {"type": "notice", "message": "Stopped."}
             except ToolError as e:
-                self.emit("lead", {"type": "error", "message": str(e)})
+                failure = {"type": "error", "message": str(e)}
             except anthropic.AnthropicError as e:
-                self.emit("lead", {"type": "error", "message": describe_api_error(e)})
+                failure = {"type": "error", "message": describe_api_error(e)}
+            # Keep the work done so far: sub-agents may already have changed files
+            self.emit("lead", {"type": "messages", "messages": close_dangling_tool_uses(history)})
+            self.emit("lead", failure)
         except Exception as e:
             self.emit("lead", {"type": "error", "message": f"Team run failed: {e}"})
         finally:
@@ -322,6 +330,7 @@ _sessions_lock = threading.Lock()
 def start_session(ctx: ToolContext, auto_approve: bool, messages: List[Dict[str, Any]], user_message: str) -> TeamSession:
     ctx.lock_wait_seconds = LOCK_WAIT_SECONDS
     session = TeamSession(ctx, auto_approve)
+    ctx.cancelled = session.cancelled
     with _sessions_lock:
         _sessions[session.id] = session
     threading.Thread(target=session.run, args=(messages, user_message), daemon=True).start()

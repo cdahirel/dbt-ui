@@ -8,6 +8,7 @@ import fnmatch
 import os
 import re
 import subprocess
+import threading
 import time
 from dataclasses import dataclass
 from pathlib import Path
@@ -30,6 +31,10 @@ MUTATING_DBT_COMMANDS = {"run", "seed", "build", "snapshot"}
 
 SELECTOR_PATTERN = re.compile(r'^[a-zA-Z0-9_.:+\-*/,@\s]*$')
 
+# Jinja allowed in run_query: only {{ ref('x') }} / {{ source('a', 'b') }}. Anything else
+# (e.g. {% do run_query(...) %}) would execute arbitrary SQL while dbt compiles the query.
+ALLOWED_JINJA = re.compile(r"""\{\{\s*(ref|source)\(\s*(['"])[\w.\-]+\2(\s*,\s*(['"])[\w.\-]+\4)?\s*\)\s*\}\}""")
+
 
 class ToolError(Exception):
     """Raised by a tool executor; the message is returned to Claude as an error result."""
@@ -42,6 +47,8 @@ class ToolContext:
     target: str = ""
     # How long a dbt command waits for another operation on the worktree to finish
     lock_wait_seconds: int = 0
+    # Set when the run is stopped; a command still waiting for the lock is then abandoned
+    cancelled: Optional[threading.Event] = None
 
 
 @dataclass
@@ -313,6 +320,9 @@ def run_query(ctx: ToolContext, args: Dict[str, Any]) -> str:
     sql = args["sql"].strip().rstrip(";").strip()
     if ";" in sql:
         raise ToolError("Only a single SELECT statement is allowed")
+    remaining = ALLOWED_JINJA.sub("", sql)
+    if any(token in remaining for token in ("{{", "{%", "{#")):
+        raise ToolError("Only {{ ref('...') }} and {{ source('...', '...') }} Jinja is allowed in run_query")
     limit = min(max(int(args.get("limit", 20)), 1), 500)
     cmd = [
         dbt_executable(ctx), "show", "--inline", sql, "--limit", str(limit),
@@ -328,6 +338,8 @@ def run_locked(ctx: ToolContext, cmd: List[str], operation: str, timeout: int) -
     path_str = str(ctx.project_path)
     deadline = time.monotonic() + ctx.lock_wait_seconds
     while not acquire_lock(path_str, operation):
+        if ctx.cancelled is not None and ctx.cancelled.is_set():
+            raise ToolError("Cancelled while waiting for another operation to finish")
         if time.monotonic() >= deadline:
             raise ToolError(f"Another operation is already running: {get_lock_status(path_str)['operation']}. Try again later.")
         time.sleep(1)
@@ -474,11 +486,12 @@ TOOLS: List[ToolSpec] = [
         },
         execute=run_dbt,
         needs_approval=lambda args: args.get("command") in MUTATING_DBT_COMMANDS,
-        changes_project=lambda args: args.get("command") != "debug",
+        # ls/test/debug leave files and the manifest unchanged: no UI refresh needed
+        changes_project=lambda args: args.get("command") not in ("ls", "test", "debug"),
     ),
     ToolSpec(
         name="run_query",
-        description="Run a single read-only SELECT against the warehouse with `dbt show --inline` (Jinja like {{ ref('x') }} is allowed) and return the rows as a text table.",
+        description="Run a single read-only SELECT against the warehouse with `dbt show --inline` and return the rows as a text table. The only Jinja allowed is {{ ref('model') }} and {{ source('source', 'table') }}.",
         input_schema={
             "type": "object",
             "properties": {

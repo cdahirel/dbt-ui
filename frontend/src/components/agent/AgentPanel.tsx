@@ -76,6 +76,11 @@ function AgentPanel({ projectPath, selectedFile, selectedTarget, onClose, onProj
   const scrollRef = useRef<HTMLDivElement | null>(null)
   const historyRef = useRef<ApiMessage[]>([])
   historyRef.current = history
+  // The run reads the latest callback (it uses MainLayout state such as the open file)
+  const onProjectChangedRef = useRef(onProjectChanged)
+  onProjectChangedRef.current = onProjectChanged
+  // Assistant mode: the run ended because tool calls await the user's decision
+  const pausedForApprovalRef = useRef(false)
 
   useEffect(() => {
     apiFetch(apiUrl('/api/agent/status'))
@@ -145,8 +150,11 @@ function AgentPanel({ projectPath, selectedFile, selectedTarget, onClose, onProj
       return
     }
     if (event.type === 'project_changed') {
-      onProjectChanged(event.path)
+      onProjectChangedRef.current(event.path)
       return
+    }
+    if (event.type === 'approval_required' && !agentId && !sessionRef.current) {
+      pausedForApprovalRef.current = true
     }
     if (event.type === 'messages') {
       setHistory(event.messages)
@@ -164,6 +172,7 @@ function AgentPanel({ projectPath, selectedFile, selectedTarget, onClose, onProj
     const controller = new AbortController()
     abortRef.current = controller
     sessionRef.current = null
+    pausedForApprovalRef.current = false
     setIsRunning(true)
 
     try {
@@ -208,8 +217,10 @@ function AgentPanel({ projectPath, selectedFile, selectedTarget, onClose, onProj
         handleEvent({ type: 'error', message: 'Error connecting to backend' })
       }
     } finally {
-      // Work left unfinished by an interruption
-      setItems(prev => interruptTools(prev))
+      // Work left unfinished by an interruption (not calls waiting for approval)
+      if (!pausedForApprovalRef.current) {
+        setItems(prev => interruptTools(prev))
+      }
       setAgents(prev => prev.map(agent => (agent.status === 'running'
         ? { ...agent, status: 'cancelled', items: interruptTools(agent.items) }
         : agent)))

@@ -315,12 +315,18 @@
   background: none;
 }
 
+.agent-table-wrapper {
+  overflow-x: auto;
+  margin: 0 0 8px;
+}
+
+.agent-table-wrapper:last-child {
+  margin-bottom: 0;
+}
+
 .agent-assistant-msg table {
   border-collapse: collapse;
-  margin: 0 0 8px;
   font-size: 12px;
-  display: block;
-  overflow-x: auto;
 }
 
 .agent-assistant-msg th,

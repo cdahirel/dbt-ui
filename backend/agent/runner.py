@@ -94,6 +94,22 @@ def sanitize_assistant_content(content: List[Dict[str, Any]]) -> List[Dict[str, 
     return sanitized
 
 
+def close_dangling_tool_uses(messages: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
+    """Make an interrupted history safe to continue.
+
+    If the last assistant turn has tool calls without results (the run stopped before or
+    while executing them), answer them as interrupted so the next request is valid.
+    """
+    pending = _pending_tool_uses(messages)
+    if not pending:
+        return messages
+    results = [
+        {"type": "tool_result", "tool_use_id": block["id"], "content": "Interrupted before this call ran.", "is_error": True}
+        for block in pending
+    ]
+    return messages + [{"role": "user", "content": results}]
+
+
 def _pending_tool_uses(messages: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
     """tool_use blocks of the last assistant turn, if they have not been answered yet."""
     if not messages or messages[-1].get("role") != "assistant":
@@ -224,7 +240,9 @@ def run_agent(
                 # The SDK could not parse a streamed tool input at all; re-issue the turn
                 json_retries += 1
                 if json_retries > 2:
-                    raise
+                    yield {"type": "messages", "messages": messages}
+                    yield {"type": "error", "message": "The model kept producing malformed tool input. Please retry."}
+                    return
                 yield {"type": "notice", "message": "Malformed tool input received, retrying..."}
                 continue
 
@@ -268,6 +286,8 @@ def run_agent(
         yield {"type": "error", "message": f"Stopped after {MAX_TURNS} steps. Send a message to continue."}
 
     except anthropic.AnthropicError as e:
+        # Keep the work done so far (tool calls may already have changed files)
+        yield {"type": "messages", "messages": close_dangling_tool_uses(messages)}
         yield {"type": "error", "message": describe_api_error(e)}
 
 

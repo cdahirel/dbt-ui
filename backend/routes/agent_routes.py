@@ -1,5 +1,6 @@
 """AI assistant (agent) API routes."""
 import json
+import queue
 from pathlib import Path
 
 from fastapi import APIRouter, HTTPException, Request
@@ -38,6 +39,7 @@ def _sse(event: dict) -> str:
     return f"data: {json.dumps(event)}\n\n"
 
 
+HEARTBEAT_SECONDS = 15
 SSE_HEADERS = {"Cache-Control": "no-cache", "X-Accel-Buffering": "no"}
 
 
@@ -80,7 +82,15 @@ def agent_team(request: AgentChatRequest, http_request: Request):
     def event_stream():
         try:
             yield _sse({"type": "session", "session_id": session.id, "agent": "lead"})
-            while (event := session.events.get()) is not None:
+            while True:
+                try:
+                    event = session.events.get(timeout=HEARTBEAT_SECONDS)
+                except queue.Empty:
+                    # Agents can be silent for minutes (approvals, dbt runs): keep proxies from timing out
+                    yield ": keep-alive\n\n"
+                    continue
+                if event is None:
+                    break
                 yield _sse(event)
         finally:
             # Client disconnected or run finished: stop any remaining agents

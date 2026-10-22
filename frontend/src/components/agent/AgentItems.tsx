@@ -1,7 +1,7 @@
 // Renders a conversation (or a sub-agent's activity): messages, thinking, tool calls and team runs
 
 import { useState } from 'react'
-import ReactMarkdown from 'react-markdown'
+import ReactMarkdown, { Components, Options } from 'react-markdown'
 import remarkGfm from 'remark-gfm'
 import {
   Brain, ChevronRight, ChevronDown, FileText, AlertTriangle, Loader2, Check, X, Users,
@@ -12,6 +12,20 @@ import ToolCallCard from './ToolCallCard'
 import { describeTool } from './toolLabels'
 
 export type DecisionHandler = (toolId: string, approved: boolean) => void
+
+// Single tildes are common in prose ("~2 min") and must not become strikethrough
+const REMARK_PLUGINS: Options['remarkPlugins'] = [[remarkGfm, { singleTilde: false }]]
+
+const MARKDOWN_COMPONENTS: Components = {
+  // Links open in a new tab so the app (and unsaved work) stays open
+  a: ({ node: _node, ...props }) => <a {...props} target="_blank" rel="noopener noreferrer" />,
+  // Wide tables scroll inside a wrapper, keeping native table semantics
+  table: ({ node: _node, ...props }) => (
+    <div className="agent-table-wrapper">
+      <table {...props} />
+    </div>
+  ),
+}
 
 const ROLE_ICONS: Record<string, JSX.Element> = {
   tester: <FlaskConical size={13} />,
@@ -34,16 +48,21 @@ function ThinkingBlock({ text }: { text: string }) {
   )
 }
 
+// First line of Markdown text that reads as prose (skips table rows and rules)
+function firstLine(text: string): string {
+  return text.split('\n').map(line => line.trim()).find(line => line && !/^(\||-{3,}|`{3})/.test(line)) ?? ''
+}
+
 // One-line description of what a sub-agent is doing now
 function latestActivity(agent: AgentRun): string {
-  if (agent.status !== 'running') return agent.summary?.split('\n')[0] ?? ''
+  if (agent.status !== 'running') return firstLine(agent.summary ?? '')
   for (let i = agent.items.length - 1; i >= 0; i--) {
     const item = agent.items[i]
     if (item.kind === 'tool') {
       const label = describeTool(item.name, item.input).label
       return item.status === 'awaiting' ? `Waiting for approval: ${label}` : label
     }
-    if (item.kind === 'text' && item.text.trim()) return item.text.trim().split('\n')[0]
+    if (item.kind === 'text' && firstLine(item.text)) return firstLine(item.text)
     if (item.kind === 'thinking') return 'Thinking…'
   }
   return 'Starting…'
@@ -85,7 +104,9 @@ function TeamRunCard({ item, agents, onDecision }: { item: ToolItem; agents: Age
       <div className="agent-team-run-header">
         <Users size={13} />
         <span>
-          {agents.length === 0 ? 'Dispatching agents…' : agents.length === 1 ? '1 agent' : `${agents.length} agents in parallel`}
+          {agents.length === 0
+            ? 'Dispatching agents…'
+            : `${agents.length} agent${agents.length > 1 ? 's' : ''} ${finished === agents.length ? 'finished' : 'working'}`}
         </span>
         {agents.length > 0 && <span className="agent-team-run-count">{finished}/{agents.length}</span>}
       </div>
@@ -120,7 +141,7 @@ function AgentItems({ items, agents = [], onDecision }: AgentItemsProps) {
           case 'text':
             return item.text ? (
               <div key={index} className="agent-assistant-msg">
-                <ReactMarkdown remarkPlugins={[remarkGfm]}>{item.text}</ReactMarkdown>
+                <ReactMarkdown remarkPlugins={REMARK_PLUGINS} components={MARKDOWN_COMPONENTS}>{item.text}</ReactMarkdown>
               </div>
             ) : null
           case 'thinking':
