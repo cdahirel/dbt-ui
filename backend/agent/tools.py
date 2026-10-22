@@ -30,6 +30,7 @@ SAFE_DBT_COMMANDS = {"parse", "compile", "ls", "test", "deps", "debug"}
 MUTATING_DBT_COMMANDS = {"run", "seed", "build", "snapshot"}
 
 SELECTOR_PATTERN = re.compile(r'^[a-zA-Z0-9_.:+\-*/,@\s]*$')
+TARGET_PATTERN = re.compile(r'^[a-zA-Z0-9_\-]{1,100}$')
 
 # Jinja allowed in run_query: only {{ ref('x') }} / {{ source('a', 'b') }}. Anything else
 # (e.g. {% do run_query(...) %}) would execute arbitrary SQL while dbt compiles the query.
@@ -310,8 +311,12 @@ def run_dbt(ctx: ToolContext, args: Dict[str, Any]) -> str:
     cmd = [dbt_executable(ctx), command, "--project-dir", str(ctx.project_path), "--profiles-dir", str(ctx.project_path)]
     if select and command not in ("parse", "deps", "debug"):
         cmd.extend(["--select", select])
-    if ctx.target and command != "deps":
-        cmd.extend(["--target", ctx.target])
+    # An explicit target (e.g. a deployment to prod) overrides the one selected in the UI
+    target = (args.get("target") or "").strip() or ctx.target
+    if target and not TARGET_PATTERN.match(target):
+        raise ToolError("Invalid target name")
+    if target and command != "deps":
+        cmd.extend(["--target", target])
     if args.get("full_refresh") and command in ("run", "seed", "build"):
         cmd.append("--full-refresh")
     return run_locked(ctx, cmd, f"Assistant: dbt {command} {select}".strip(), timeout=600)
@@ -474,7 +479,7 @@ TOOLS: List[ToolSpec] = [
         description=(
             "Run a dbt command in the project. parse/compile/ls/test/deps/debug are read-only for the warehouse; "
             "run/seed/build/snapshot materialize data and require user approval. Use 'parse' after editing to validate, "
-            "and a selector to keep runs small."
+            "and a selector to keep runs small. Without `target`, the target selected in the UI is used."
         ),
         input_schema={
             "type": "object",
@@ -482,6 +487,7 @@ TOOLS: List[ToolSpec] = [
                 "command": {"type": "string", "enum": sorted(SAFE_DBT_COMMANDS | MUTATING_DBT_COMMANDS)},
                 "select": {"type": "string", "description": "dbt node selector, e.g. 'stg_orders+' or 'tag:daily'."},
                 "full_refresh": {"type": "boolean"},
+                "target": {"type": "string", "description": "profiles.yml target to use instead of the one selected in the UI, e.g. 'prod' for a deployment."},
             },
             "required": ["command"],
         },

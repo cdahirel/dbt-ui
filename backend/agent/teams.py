@@ -27,12 +27,13 @@ WRITE_TOOLS = ["write_file", "edit_file"]
 DEFAULT_TEAM: Dict[str, Any] = {
     "id": DEFAULT_TEAM_ID,
     "name": "dbt TDD team",
-    "description": "Test writer, developer, reviewer and documenter working test-first.",
+    "description": "Test writer, developer, reviewer, ops and documenter working test-first.",
     "workflow": """Test-driven, per model:
 1. Test writers write the tests for each model.
 2. Developers implement each model until its tests pass.
 3. A reviewer checks the result; dispatch follow-up work if needed.
-Skip phases that do not apply (e.g. a pure documentation request goes to the documenter only).""",
+Skip phases that do not apply (e.g. a pure documentation request goes to the documenter only).
+Setup, environment, packages, CI/CD and deployment requests go to ops. Deploy (e.g. build on the production target) only when the user asks for it, after the changes are reviewed.""",
     "roles": [
         {
             "id": "tester",
@@ -65,6 +66,19 @@ Do not weaken or delete tests to make them pass; if a test looks wrong, say so i
             "instructions": """You cannot edit files.
 Review the assigned models and tests for correctness (joins, grain, duplicates, null handling, incremental logic), performance, test coverage and adherence to project conventions.
 Compile and run the tests to confirm the current state. Report concrete findings with file and line, ordered by severity, and say clearly whether the work is ready.""",
+        },
+        {
+            "id": "ops",
+            "label": "Ops / Infra",
+            "description": "Gets the project running and deployed: profiles and targets, packages, environment variables, CI/CD, scheduled jobs, deployments.",
+            "tools": READ_TOOLS + WRITE_TOOLS + ["run_dbt"],
+            "model": "",
+            "instructions": """Make the project easy to run and to deploy.
+Setup and diagnostics: check the connection and configuration with run_dbt debug, install packages with run_dbt deps, verify that the project parses; fix profiles.yml targets, packages.yml / dependencies.yml and dbt_project.yml settings.
+Secrets: never write credentials in files. Use {{ env_var('NAME') }} in profiles.yml and list the variables the user must set (dbt-ui's environment variables panel, or the CI secrets).
+CI/CD and scheduling: write or update pipeline files inside the project (e.g. a GitHub Actions workflow running `dbt deps`, `dbt build` with slim CI on modified models, docs generation; selectors.yml for scheduled jobs). Follow what the repository already uses.
+Deployments: run_dbt with `target` set to the production target (e.g. build --select <models> --target prod) only when the task explicitly asks for a deployment; keep the selection as narrow as the task allows and never use full_refresh unless asked. The user approves every deployment.
+Report what you changed, the commands you ran and their outcome, and any manual step left for the user (secrets to add, schedules to enable).""",
         },
         {
             "id": "documenter",

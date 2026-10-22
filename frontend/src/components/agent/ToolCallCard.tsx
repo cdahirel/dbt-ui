@@ -41,7 +41,13 @@ function ApprovalPreview({ name, input }: { name: string; input: Record<string, 
     return <pre className="agent-tool-pre agent-diff-new">{str(input.content)}</pre>
   }
   if (name === 'run_dbt') {
-    return <div className="agent-approval-note">This command materializes data in the warehouse.</div>
+    return (
+      <div className="agent-approval-note">
+        This command materializes data in the warehouse
+        {input.target ? <> on target <strong className="agent-approval-target">{str(input.target)}</strong></> : ' (target selected in the UI)'}
+        {input.full_refresh ? ', with a full refresh' : ''}.
+      </div>
+    )
   }
   return <pre className="agent-tool-pre">{JSON.stringify(input, null, 2)}</pre>
 }

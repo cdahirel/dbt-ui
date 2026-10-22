@@ -5,7 +5,7 @@ import ReactMarkdown, { Components, Options } from 'react-markdown'
 import remarkGfm from 'remark-gfm'
 import {
   Brain, ChevronRight, ChevronDown, FileText, AlertTriangle, Loader2, Check, X, Users,
-  FlaskConical, Code2, Eye, BookOpen, Bot,
+  FlaskConical, Code2, Eye, BookOpen, Bot, ServerCog,
 } from 'lucide-react'
 import { AgentRun, DisplayItem, ToolItem } from './agentTypes'
 import ToolCallCard from './ToolCallCard'
@@ -32,6 +32,7 @@ const ROLE_ICONS: Record<string, JSX.Element> = {
   developer: <Code2 size={13} />,
   reviewer: <Eye size={13} />,
   documenter: <BookOpen size={13} />,
+  ops: <ServerCog size={13} />,
 }
 
 const KNOWN_ROLES = new Set(Object.keys(ROLE_ICONS))

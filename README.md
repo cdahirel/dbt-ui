@@ -63,7 +63,7 @@ Click **Assistant** (bottom right) to open the agent panel. The assistant works 
 | `run_dbt` (`parse`, `compile`, `ls`, `test`, `deps`, `debug`) | Validate and test changes | No |
 | `run_query` | Preview data with `dbt show --inline` | No |
 | `write_file`, `edit_file` | Create or change files (shown as a diff) | Yes |
-| `run_dbt` (`run`, `seed`, `build`, `snapshot`) | Materialize data in the warehouse | Yes |
+| `run_dbt` (`run`, `seed`, `build`, `snapshot`) | Materialize data in the warehouse (optionally on another target, e.g. `prod` for a deployment) | Yes |
 
 ### Team mode
 
@@ -74,6 +74,7 @@ Switch the panel to **Team** to have several agents work together. A lead agent 
 | Test writer | Writes dbt unit tests and data tests first (test-driven), without touching model SQL |
 | Developer | Implements the model until its tests pass |
 | Reviewer | Reviews models and tests, runs them, reports findings (read-only) |
+| Ops / Infra | Gets the project running and deployed: `dbt debug`/`deps`, profiles and targets (secrets via `env_var`), CI/CD and scheduled jobs, deployments to a production target |
 | Documenter | Writes model and column descriptions |
 
 The default workflow is test-first: testers, then developers, then a reviewer; the lead reads the reports, dispatches follow-up work if needed, and summarizes. Each agent's progress appears in its own lane; approvals requested by any agent show up in its lane while the others keep working. dbt commands from parallel agents are queued on the project's operation lock.
