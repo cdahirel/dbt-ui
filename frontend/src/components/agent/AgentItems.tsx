@@ -2,6 +2,7 @@
 
 import { useState } from 'react'
 import ReactMarkdown from 'react-markdown'
+import remarkGfm from 'remark-gfm'
 import {
   Brain, ChevronRight, ChevronDown, FileText, AlertTriangle, Loader2, Check, X, Users,
   FlaskConical, Code2, Eye, BookOpen, Bot,
@@ -83,7 +84,9 @@ function TeamRunCard({ item, agents, onDecision }: { item: ToolItem; agents: Age
     <div className="agent-team-run">
       <div className="agent-team-run-header">
         <Users size={13} />
-        <span>{agents.length > 0 ? `${agents.length} agent${agents.length > 1 ? 's' : ''} working in parallel` : 'Dispatching agents…'}</span>
+        <span>
+          {agents.length === 0 ? 'Dispatching agents…' : agents.length === 1 ? '1 agent' : `${agents.length} agents in parallel`}
+        </span>
         {agents.length > 0 && <span className="agent-team-run-count">{finished}/{agents.length}</span>}
       </div>
       {agents.map(agent => <AgentLane key={agent.id} agent={agent} onDecision={onDecision} />)}
@@ -117,7 +120,7 @@ function AgentItems({ items, agents = [], onDecision }: AgentItemsProps) {
           case 'text':
             return item.text ? (
               <div key={index} className="agent-assistant-msg">
-                <ReactMarkdown>{item.text}</ReactMarkdown>
+                <ReactMarkdown remarkPlugins={[remarkGfm]}>{item.text}</ReactMarkdown>
               </div>
             ) : null
           case 'thinking':

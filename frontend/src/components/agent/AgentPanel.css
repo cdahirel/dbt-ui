@@ -315,6 +315,25 @@
   background: none;
 }
 
+.agent-assistant-msg table {
+  border-collapse: collapse;
+  margin: 0 0 8px;
+  font-size: 12px;
+  display: block;
+  overflow-x: auto;
+}
+
+.agent-assistant-msg th,
+.agent-assistant-msg td {
+  border: 1px solid #3c3c3c;
+  padding: 4px 8px;
+  text-align: left;
+}
+
+.agent-assistant-msg th {
+  background-color: #2d2d30;
+}
+
 .agent-assistant-msg h1,
 .agent-assistant-msg h2,
 .agent-assistant-msg h3 {
