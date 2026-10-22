@@ -10,7 +10,8 @@ import MetadataSidebar from '../editor/MetadataSidebar'
 import LogResultModal from './LogResultModal'
 import UnsavedChangesModal from './UnsavedChangesModal'
 import ConfirmModal from './ConfirmModal'
-import { PanelLeftOpen } from 'lucide-react'
+import AgentPanel from '../agent/AgentPanel'
+import { PanelLeftOpen, Sparkles } from 'lucide-react'
 import { apiUrl, apiFetch } from '../../config/api'
 
 interface OperationResult {
@@ -48,6 +49,10 @@ function MainLayout({ projectPath, dbtVersion: initialDbtVersion, onChangeProjec
   const [selectedTarget, setSelectedTarget] = useState<string>('')
   const [hasMetaDVPackage, setHasMetaDVPackage] = useState(false)
   const [metaDVEnabled, setMetaDVEnabled] = useState(true)
+  const [agentEnabled, setAgentEnabled] = useState(false)
+  const [showAgent, setShowAgent] = useState(false)
+  const [agentWidth, setAgentWidth] = useState(420)
+  const [editorReloadKey, setEditorReloadKey] = useState(0)  // Remounts the editor to reload a file changed by the assistant
   const saveRef = useRef<(() => Promise<void>) | null>(null)
 
   // Get list of models affected by a selector using dbt ls
@@ -152,6 +157,13 @@ function MainLayout({ projectPath, dbtVersion: initialDbtVersion, onChangeProjec
     }
   }
 
+  // The assistant routes are only registered when the feature is enabled on the backend
+  useEffect(() => {
+    apiFetch(apiUrl('/api/agent/status'))
+      .then(response => setAgentEnabled(response.ok))
+      .catch(() => setAgentEnabled(false))
+  }, [])
+
   useEffect(() => {
     if (projectPath) {
       checkVenvStatus()
@@ -172,6 +184,33 @@ function MainLayout({ projectPath, dbtVersion: initialDbtVersion, onChangeProjec
       console.log('[MainLayout] packages file saved, checking MetaDV package')
       checkMetaDVPackage()
     }
+  }
+
+  // Handler for when the assistant changed files or ran a dbt command
+  const handleAgentProjectChanged = (changedPath?: string) => {
+    setRefreshTrigger((prev: number) => prev + 1)
+    setCompilationTrigger((prev: number) => prev + 1)
+    loadGitModifiedFiles()
+    if (changedPath) {
+      handleFileSaved(changedPath)
+      // Reload the open file unless the user has unsaved edits (saving then goes through conflict detection)
+      if (changedPath === selectedFile && !hasUnsavedChanges) {
+        setEditorReloadKey((prev: number) => prev + 1)
+      }
+    }
+  }
+
+  const handleAgentResizeStart = (e: React.MouseEvent) => {
+    e.preventDefault()
+    const onMouseMove = (event: MouseEvent) => {
+      setAgentWidth(Math.min(Math.max(window.innerWidth - event.clientX, 320), 900))
+    }
+    const onMouseUp = () => {
+      document.removeEventListener('mousemove', onMouseMove)
+      document.removeEventListener('mouseup', onMouseUp)
+    }
+    document.addEventListener('mousemove', onMouseMove)
+    document.addEventListener('mouseup', onMouseUp)
   }
 
   const handleFileModified = (filePath: string, isModified: boolean) => {
@@ -540,6 +579,7 @@ function MainLayout({ projectPath, dbtVersion: initialDbtVersion, onChangeProjec
 
   return (
     <div className="main-layout">
+      <div className="main-layout-workspace">
       {!showSidebar && (
         <button
           className="sidebar-toggle-btn"
@@ -583,6 +623,7 @@ function MainLayout({ projectPath, dbtVersion: initialDbtVersion, onChangeProjec
                   <SplitPane direction="horizontal" primary="second">
                     <Pane>
                       <Editor
+                        key={editorReloadKey}
                         selectedFile={selectedFile}
                         projectPath={projectPath}
                         onToggleMetadata={() => setShowMetadata(!showMetadata)}
@@ -607,6 +648,7 @@ function MainLayout({ projectPath, dbtVersion: initialDbtVersion, onChangeProjec
                   </SplitPane>
                 ) : (
                   <Editor
+                    key={editorReloadKey}
                     selectedFile={selectedFile}
                     projectPath={projectPath}
                     onToggleMetadata={() => setShowMetadata(!showMetadata)}
@@ -655,6 +697,7 @@ function MainLayout({ projectPath, dbtVersion: initialDbtVersion, onChangeProjec
               <SplitPane direction="horizontal" primary="second">
                 <Pane>
                   <Editor
+                    key={editorReloadKey}
                     selectedFile={selectedFile}
                     projectPath={projectPath}
                     onToggleMetadata={() => setShowMetadata(!showMetadata)}
@@ -678,6 +721,7 @@ function MainLayout({ projectPath, dbtVersion: initialDbtVersion, onChangeProjec
               </SplitPane>
             ) : (
               <Editor
+                key={editorReloadKey}
                 selectedFile={selectedFile}
                 projectPath={projectPath}
                 onToggleMetadata={() => setShowMetadata(!showMetadata)}
@@ -717,6 +761,25 @@ function MainLayout({ projectPath, dbtVersion: initialDbtVersion, onChangeProjec
             />
           </Pane>
         </SplitPane>
+      )}
+      {agentEnabled && !showAgent && (
+        <button className="agent-toggle-btn" onClick={() => setShowAgent(true)} title="Open the AI assistant">
+          <Sparkles size={14} /> Assistant
+        </button>
+      )}
+      </div>
+      {agentEnabled && (
+        // Kept mounted while hidden so the conversation survives closing the panel
+        <div className="agent-panel-container" style={{ width: agentWidth, display: showAgent ? 'block' : 'none' }}>
+          <div className="agent-panel-resizer" onMouseDown={handleAgentResizeStart} />
+          <AgentPanel
+            projectPath={projectPath}
+            selectedFile={selectedFile}
+            selectedTarget={selectedTarget}
+            onClose={() => setShowAgent(false)}
+            onProjectChanged={handleAgentProjectChanged}
+          />
+        </div>
       )}
       {showUnsavedChangesModal && pendingAction && (
         <UnsavedChangesModal
