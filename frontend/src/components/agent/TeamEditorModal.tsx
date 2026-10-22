@@ -9,16 +9,20 @@ import './TeamEditorModal.css'
 interface TeamEditorModalProps {
   projectPath: string
   info: TeamsInfo
-  initialTeamId: string
+  selectedTeamId: string  // Team selected in the panel
   onClose: () => void
-  // Called after a save or delete with the team to select
+  // Called after a save or delete with the team the panel should select
   onChanged: (selectTeamId: string) => void
 }
 
 const slugify = (text: string): string =>
   text.toLowerCase().replace(/[^a-z0-9]+/g, '_').replace(/^_+|_+$/g, '').replace(/^(\d)/, 'r_$1').slice(0, 32) || 'role'
 
+let nextRoleKey = 0
+const newRoleKey = () => `role-${nextRoleKey++}`
+
 const emptyRole = (): TeamRole => ({
+  _key: newRoleKey(),
   id: '',
   label: '',
   description: '',
@@ -27,7 +31,11 @@ const emptyRole = (): TeamRole => ({
   model: '',
 })
 
-const copyTeam = (team: AgentTeam): AgentTeam => JSON.parse(JSON.stringify(team))
+// Deep copy with a stable key per role, so editors keep their state when roles are removed
+const copyTeam = (team: AgentTeam): AgentTeam => {
+  const copy: AgentTeam = JSON.parse(JSON.stringify(team))
+  return { ...copy, roles: copy.roles.map(role => ({ ...role, _key: role._key ?? newRoleKey() })) }
+}
 
 function RoleEditor({ role, index, info, readOnly, onChange, onRemove }: {
   role: TeamRole
@@ -108,20 +116,25 @@ function RoleEditor({ role, index, info, readOnly, onChange, onRemove }: {
   )
 }
 
-function TeamEditorModal({ projectPath, info, initialTeamId, onClose, onChanged }: TeamEditorModalProps) {
+function TeamEditorModal({ projectPath, info, selectedTeamId, onClose, onChanged }: TeamEditorModalProps) {
   const findTeam = (id: string) => info.teams.find(team => team.id === id) ?? info.teams[0]
-  const [draft, setDraft] = useState<AgentTeam>(() => copyTeam(findTeam(initialTeamId)))
+  const [draft, setDraft] = useState<AgentTeam>(() => copyTeam(findTeam(selectedTeamId)))
   const [dirty, setDirty] = useState(false)
   const [error, setError] = useState<string | null>(null)
   const [saving, setSaving] = useState(false)
   const readOnly = Boolean(draft.builtin)
   const defaultTeam = info.teams.find(team => team.builtin)
 
+  const requestClose = () => {
+    if (dirty && !window.confirm('Discard unsaved changes to this team?')) return
+    onClose()
+  }
+
   useEffect(() => {
-    const onKey = (e: KeyboardEvent) => e.key === 'Escape' && onClose()
+    const onKey = (e: KeyboardEvent) => e.key === 'Escape' && requestClose()
     document.addEventListener('keydown', onKey)
     return () => document.removeEventListener('keydown', onKey)
-  }, [onClose])
+  }, [dirty, onClose])
 
   const edit = (patch: Partial<AgentTeam>) => {
     setDraft(prev => ({ ...prev, ...patch }))
@@ -174,16 +187,19 @@ function TeamEditorModal({ projectPath, info, initialTeamId, onClose, onChanged 
   const save = async () => {
     const data = await request('/api/agent/teams/save', { team: draft })
     if (data?.team) {
-      setDraft(data.team)
+      // Same role order as the draft: keep the editors' keys
+      const saved: AgentTeam = data.team
+      setDraft(copyTeam({ ...saved, roles: saved.roles.map((role, i) => ({ ...role, _key: draft.roles[i]?._key })) }))
       setDirty(false)
-      onChanged(data.team.id)
+      // A new team becomes the selected one; editing another team keeps the current selection
+      onChanged(draft.id ? selectedTeamId : saved.id)
     }
   }
 
   const remove = async () => {
     if (!draft.id || !window.confirm(`Delete the team "${draft.name}"?`)) return
     if (await request('/api/agent/teams/delete', { team_id: draft.id })) {
-      onChanged(info.default_team_id)
+      onChanged(draft.id === selectedTeamId ? info.default_team_id : selectedTeamId)
       setDraft(copyTeam(findTeam(info.default_team_id)))
       setDirty(false)
     }
@@ -191,7 +207,7 @@ function TeamEditorModal({ projectPath, info, initialTeamId, onClose, onChanged 
 
   const updateRole = (index: number, role: TeamRole) => edit({ roles: draft.roles.map((r, i) => (i === index ? role : r)) })
   const addRole = (template?: TeamRole) => {
-    const role = template ? { ...template, tools: [...template.tools] } : emptyRole()
+    const role = template ? { ...template, tools: [...template.tools], _key: newRoleKey() } : emptyRole()
     // Keep role ids unique when the same template is added twice
     let id = role.id
     for (let n = 2; id && draft.roles.some(r => r.id === id); n++) id = `${role.id}_${n}`.slice(0, 32)
@@ -199,12 +215,12 @@ function TeamEditorModal({ projectPath, info, initialTeamId, onClose, onChanged 
   }
 
   return (
-    <div className="team-modal-overlay" onClick={onClose}>
+    <div className="team-modal-overlay" onClick={requestClose}>
       <div className="team-modal" onClick={e => e.stopPropagation()}>
         <div className="team-modal-header">
           <Users size={16} />
           <h3>Agent teams</h3>
-          <button className="team-icon-btn" onClick={onClose} title="Close"><X size={16} /></button>
+          <button className="team-icon-btn" onClick={requestClose} title="Close"><X size={16} /></button>
         </div>
 
         <div className="team-modal-body">
@@ -250,8 +266,8 @@ function TeamEditorModal({ projectPath, info, initialTeamId, onClose, onChanged 
             </fieldset>
 
             <div className="team-roles-header">
-              <span>Roles ({draft.roles.length}/8)</span>
-              {!readOnly && draft.roles.length < 8 && (
+              <span>Roles ({draft.roles.length}/{info.max_roles})</span>
+              {!readOnly && draft.roles.length < info.max_roles && (
                 <div className="team-add-role">
                   <button className="team-btn" onClick={() => addRole()}><Plus size={13} /> Blank role</button>
                   {defaultTeam && (
@@ -271,7 +287,7 @@ function TeamEditorModal({ projectPath, info, initialTeamId, onClose, onChanged 
             </div>
             {draft.roles.map((role, index) => (
               <RoleEditor
-                key={`${draft.id}-${index}`}
+                key={role._key}
                 role={role}
                 index={index}
                 info={info}
@@ -292,7 +308,7 @@ function TeamEditorModal({ projectPath, info, initialTeamId, onClose, onChanged 
           {!readOnly && draft.id && (
             <button className="team-btn" onClick={duplicate} disabled={saving}><Copy size={13} /> Duplicate</button>
           )}
-          <button className="team-btn" onClick={onClose}>Close</button>
+          <button className="team-btn" onClick={requestClose}>Close</button>
           {!readOnly && (
             <button className="team-btn team-btn-primary" onClick={save} disabled={saving || !dirty}>
               {saving ? 'Saving…' : 'Save team'}

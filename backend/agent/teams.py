@@ -104,7 +104,7 @@ class TeamValidationError(ValueError):
 def available_tools() -> List[Dict[str, Any]]:
     """Tools a role can be given, for the team editor."""
     return [
-        {"name": spec.name, "description": spec.description, "may_need_approval": spec.name in ("write_file", "edit_file", "run_dbt")}
+        {"name": spec.name, "description": spec.description, "may_need_approval": spec.may_need_approval}
         for spec in TOOLS_BY_NAME.values()
     ]
 

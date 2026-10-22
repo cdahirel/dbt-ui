@@ -139,7 +139,7 @@ def _execute_tools(
             output, is_error = f"Unknown tool: {name}", True
         elif (error := validate_input(spec, args)) is not None:
             output, is_error = f"Invalid input: {error}", True
-        elif spec.needs_approval(args) and not auto_approve and not approvals.get(tool_id, False):
+        elif spec.must_ask(args, auto_approve) and not approvals.get(tool_id, False):
             output, is_error = "The user declined this action.", True
         else:
             yield {"type": "tool_running", "id": tool_id, "name": name}
@@ -160,12 +160,12 @@ def _execute_tools(
     return results
 
 
-def _needs_approval(tool_uses: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
+def _needs_approval(tool_uses: List[Dict[str, Any]], auto_approve: bool) -> List[Dict[str, Any]]:
     gated = []
     for block in tool_uses:
         spec = TOOLS_BY_NAME.get(block["name"])
         args = block.get("input", {})
-        if spec and validate_input(spec, args) is None and spec.needs_approval(args):
+        if spec and validate_input(spec, args) is None and spec.must_ask(args, auto_approve):
             gated.append({"id": block["id"], "name": block["name"], "input": args})
     return gated
 
@@ -188,7 +188,8 @@ def stream_turn(
         output_config={"effort": EFFORT},
         cache_control={"type": "ephemeral"},
     )
-    if FALLBACKS_ENABLED and model in FALLBACK_MODELS:
+    # The configured model keeps the fallback as before; per-role models only when known to support it
+    if FALLBACKS_ENABLED and (model == MODEL or model in FALLBACK_MODELS):
         params["betas"] = ["server-side-fallback-2026-07-01"]
         params["fallbacks"] = "default"
 
@@ -277,7 +278,7 @@ def run_agent(
             for block in tool_uses:
                 yield {"type": "tool_use", "id": block["id"], "name": block["name"], "input": block.get("input", {})}
 
-            gated = [] if auto_approve else _needs_approval(tool_uses)
+            gated = _needs_approval(tool_uses, auto_approve)
             if gated:
                 yield {"type": "messages", "messages": messages}
                 yield {"type": "approval_required", "tools": gated}

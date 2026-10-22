@@ -68,6 +68,7 @@ export interface TeamRole {
   instructions: string
   tools: string[]
   model: string  // '' = the assistant's configured model
+  _key?: string  // Editor-only stable key; ignored by the backend
 }
 
 export interface AgentTeam {
@@ -91,4 +92,5 @@ export interface TeamsInfo {
   tools: TeamToolInfo[]
   models: string[]
   default_model: string
+  max_roles: number
 }

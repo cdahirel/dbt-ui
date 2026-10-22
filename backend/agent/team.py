@@ -165,7 +165,7 @@ class TeamSession:
         elif spec is self.run_subagents_spec:
             self.emit(agent, {"type": "tool_running", "id": tool_id, "name": name})
             output, is_error = self._run_subagents(tool_id, args["tasks"])
-        elif spec.needs_approval(args) and not self.auto_approve and not self._wait_for_approval(agent, block):
+        elif spec.must_ask(args, self.auto_approve) and not self._wait_for_approval(agent, block):
             self._check_cancelled()
             output, is_error = "The user declined this action.", True
         else:

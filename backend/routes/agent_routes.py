@@ -10,7 +10,7 @@ from models import AgentChatRequest, AgentApprovalRequest, AgentSessionRequest, 
 from agent.runner import MODEL, is_agent_configured, run_agent
 from agent.team import end_session, get_session, start_session
 from agent.teams import (
-    DEFAULT_TEAM_ID, ROLE_MODELS, TeamValidationError, available_tools, delete_team, get_team, list_teams, save_team,
+    DEFAULT_TEAM_ID, MAX_ROLES, ROLE_MODELS, TeamValidationError, available_tools, delete_team, get_team, list_teams, save_team,
 )
 from agent.tools import ToolContext
 from routes.env_routes import get_env_vars_from_cookie
@@ -21,9 +21,7 @@ router = APIRouter()
 
 def _prepare(request: AgentChatRequest, http_request: Request):
     """Validate a chat request and build the tool context and user message."""
-    path = Path(request.path).expanduser().resolve()
-    if not path.is_dir():
-        raise HTTPException(status_code=404, detail="Project path does not exist")
+    path = _project_dir(request.path)
 
     user_message = request.user_message.strip()
     if user_message and request.selected_file:
@@ -136,6 +134,7 @@ async def agent_teams(request: ProjectPath):
         "tools": available_tools(),
         "models": ROLE_MODELS,
         "default_model": MODEL,
+        "max_roles": MAX_ROLES,
     }
 
 

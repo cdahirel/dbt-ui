@@ -58,10 +58,21 @@ class ToolSpec:
     description: str
     input_schema: Dict[str, Any]
     execute: Callable[[ToolContext, Dict[str, Any]], str]
-    # Returns True if this particular call needs user approval
+    # Returns True if this particular call needs user approval (skipped when auto-approve is on)
     needs_approval: Callable[[Dict[str, Any]], bool] = lambda args: False
+    # Returns True if this call needs approval even when auto-approve is on
+    always_ask: Callable[[Dict[str, Any]], bool] = lambda args: False
     # True if a successful call may change project files or dbt artifacts
     changes_project: Callable[[Dict[str, Any]], bool] = lambda args: False
+
+    @property
+    def may_need_approval(self) -> bool:
+        """Whether some calls of this tool can require approval (shown in the team editor)."""
+        return self.needs_approval is not ToolSpec.needs_approval
+
+    def must_ask(self, args: Dict[str, Any], auto_approve: bool) -> bool:
+        """Whether this call has to wait for the user's decision."""
+        return self.always_ask(args) or (self.needs_approval(args) and not auto_approve)
 
 
 def truncate(text: str, limit: int = MAX_TOOL_OUTPUT) -> str:
@@ -319,7 +330,8 @@ def run_dbt(ctx: ToolContext, args: Dict[str, Any]) -> str:
         cmd.extend(["--target", target])
     if args.get("full_refresh") and command in ("run", "seed", "build"):
         cmd.append("--full-refresh")
-    return run_locked(ctx, cmd, f"Assistant: dbt {command} {select}".strip(), timeout=600)
+    operation = f"Assistant: dbt {command} {select}".strip() + (f" (target {target})" if target else "")
+    return run_locked(ctx, cmd, operation, timeout=600)
 
 
 def run_query(ctx: ToolContext, args: Dict[str, Any]) -> str:
@@ -493,6 +505,8 @@ TOOLS: List[ToolSpec] = [
         },
         execute=run_dbt,
         needs_approval=lambda args: args.get("command") in MUTATING_DBT_COMMANDS,
+        # Any command on an explicitly chosen target (e.g. a prod deployment) is confirmed by the user
+        always_ask=lambda args: bool((args.get("target") or "").strip()),
         # ls/test/debug leave files and the manifest unchanged: no UI refresh needed
         changes_project=lambda args: args.get("command") not in ("ls", "test", "debug"),
     ),

@@ -74,7 +74,7 @@ function AgentPanel({ projectPath, selectedFile, selectedTarget, onClose, onProj
   const [status, setStatus] = useState<{ configured: boolean; model: string } | null>(null)
   const [autoApprove, setAutoApprove] = useState(() => readPreference(AUTO_APPROVE_KEY) === 'true')
   const [teamsInfo, setTeamsInfo] = useState<TeamsInfo | null>(null)
-  const [teamId, setTeamId] = useState(() => readPreference(TEAM_KEY) ?? '')
+  const [teamId, setTeamId] = useState('')
   const [showTeamEditor, setShowTeamEditor] = useState(false)
   const abortRef = useRef<AbortController | null>(null)
   const sessionRef = useRef<string | null>(null)  // Team run id, for approvals and cancellation
@@ -113,7 +113,9 @@ function AgentPanel({ projectPath, selectedFile, selectedTarget, onClose, onProj
   }
 
   // Teams are stored per project; fall back to the default team if the selected one is gone
+  const loadTeamsSeq = useRef(0)
   const loadTeams = async (selectTeamId?: string) => {
+    const seq = ++loadTeamsSeq.current
     try {
       const response = await apiFetch(apiUrl('/api/agent/teams'), {
         method: 'POST',
@@ -122,8 +124,10 @@ function AgentPanel({ projectPath, selectedFile, selectedTarget, onClose, onProj
       })
       if (!response.ok) return
       const data: TeamsInfo = await response.json()
+      // A newer request (e.g. after switching project) wins
+      if (seq !== loadTeamsSeq.current) return
       setTeamsInfo(data)
-      const wanted = selectTeamId ?? teamId
+      const wanted = selectTeamId ?? readPreference(`${TEAM_KEY}:${projectPath}`) ?? ''
       selectTeam(data.teams.some(team => team.id === wanted) ? wanted : data.default_team_id)
     } catch (err) {
       console.error('[AgentPanel] Error loading agent teams:', err)
@@ -132,7 +136,8 @@ function AgentPanel({ projectPath, selectedFile, selectedTarget, onClose, onProj
 
   const selectTeam = (id: string) => {
     setTeamId(id)
-    writePreference(TEAM_KEY, id)
+    // Custom teams belong to a project, so the choice is remembered per project
+    writePreference(`${TEAM_KEY}:${projectPath}`, id)
   }
 
   // New project: start a new conversation
@@ -353,7 +358,12 @@ function AgentPanel({ projectPath, selectedFile, selectedTarget, onClose, onProj
               <option key={team.id} value={team.id}>{team.name}{team.builtin ? ' (default)' : ''}</option>
             ))}
           </select>
-          <button className="agent-icon-btn" onClick={() => setShowTeamEditor(true)} title="Create or customize teams">
+          <button
+            className="agent-icon-btn"
+            onClick={() => setShowTeamEditor(true)}
+            disabled={isRunning}
+            title={isRunning ? 'Stop the current run to edit teams' : 'Create or customize teams'}
+          >
             <Settings2 size={14} />
           </button>
         </div>
@@ -427,7 +437,7 @@ function AgentPanel({ projectPath, selectedFile, selectedTarget, onClose, onProj
         <TeamEditorModal
           projectPath={projectPath}
           info={teamsInfo}
-          initialTeamId={teamId}
+          selectedTeamId={teamId}
           onClose={() => setShowTeamEditor(false)}
           onChanged={id => {
             // Saved or deleted: refresh the list and select the edited team
