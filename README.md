@@ -78,6 +78,14 @@ Switch the panel to **Team** to have several agents work together. A lead agent 
 
 The default workflow is test-first: testers, then developers, then a reviewer; the lead reads the reports, dispatches follow-up work if needed, and summarizes. Each agent's progress appears in its own lane; approvals requested by any agent show up in its lane while the others keep working. dbt commands from parallel agents are queued on the project's operation lock.
 
+#### Custom teams
+
+The team above is the built-in default. Click the settings icon next to the team selector to manage teams:
+
+- **Duplicate** the default team (or start a **new team**) and adapt it: rename it, describe its **workflow** (how the lead sequences the roles), and add, remove or edit **roles**.
+- Each role has a name, a description the lead uses to decide what to delegate, instructions (the agent's system prompt), the **tools** it may use (e.g. a read-only reviewer gets no write tools) and an optional **model** (e.g. a faster model for documentation).
+- Custom teams are saved per project in `.dbt-ui/agent-teams.json`, so they can be committed and shared with the project. Agents themselves cannot read or modify this file.
+
 Actions that change files or the warehouse wait for your approval unless **Auto-approve** is checked. The file open in the editor is shared with the assistant as context (toggle the chip above the input). dbt commands use the target selected in the lineage panel and the project's environment variables.
 
 | Environment Variable | Default | Description |

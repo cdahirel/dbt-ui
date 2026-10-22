@@ -1,7 +1,7 @@
 """Team mode: a lead agent plans the work and delegates it to specialized agents.
 
-The lead explores the project and calls `run_subagents` to dispatch tasks to role
-agents (test writer, developer, reviewer, documenter). Tasks in one call run in
+The lead explores the project and calls `run_subagents` to dispatch tasks to the role
+agents of the selected team (see agent/teams.py). Tasks in one call run in
 parallel threads; each sub-agent has its own conversation and tool set and reports
 back to the lead. Unlike the single assistant, a team run keeps its request open:
 calls that need approval block until the user answers via /api/agent/approve.
@@ -24,88 +24,60 @@ MAX_PARALLEL_TASKS = 6
 APPROVAL_TIMEOUT_SECONDS = 30 * 60
 LOCK_WAIT_SECONDS = 600  # sub-agents queue up for the worktree lock instead of failing
 
-READ_TOOLS = ["list_files", "read_file", "search_files", "list_nodes", "get_node", "get_compiled_sql"]
-WRITE_TOOLS = ["write_file", "edit_file"]
-
-ROLES: Dict[str, Dict[str, Any]] = {
-    "tester": {
-        "label": "Test writer",
-        "tools": READ_TOOLS + WRITE_TOOLS + ["run_dbt", "run_query"],
-        "prompt": """Your role: TEST WRITER (test-driven development).
-Write the tests that specify the expected behavior BEFORE the implementation exists or changes:
-- dbt unit tests (`unit_tests:` in YAML, dbt >= 1.8) with small given/expect fixtures for transformation logic;
-- data tests on the model's columns (unique, not_null, accepted_values, relationships) and singular tests in tests/ for business rules.
-Follow the project's existing test conventions and file layout. Do not write or change model SQL: that is the developer's job.
-Validate that the YAML parses (run_dbt parse). Report the exact test names and the files you created so the developer can run them.""",
-    },
-    "developer": {
-        "label": "Developer",
-        "tools": READ_TOOLS + WRITE_TOOLS + ["run_dbt", "run_query"],
-        "prompt": """Your role: DEVELOPER.
-Implement or change the model(s) you are assigned, following the project's conventions (layering, naming, CTE style, ref/source).
-If tests exist for your model, make them pass: compile, then build/test with a narrow selector (e.g. `--select model_name`), read failures, fix, and repeat.
-Do not weaken or delete tests to make them pass; if a test looks wrong, say so in your report.""",
-    },
-    "reviewer": {
-        "label": "Reviewer",
-        "tools": READ_TOOLS + ["run_dbt", "run_query"],
-        "prompt": """Your role: REVIEWER. You cannot edit files.
-Review the assigned models and tests for correctness (joins, grain, duplicates, null handling, incremental logic), performance, test coverage and adherence to project conventions.
-Compile and run the tests to confirm the current state. Report concrete findings with file and line, ordered by severity, and say clearly whether the work is ready.""",
-    },
-    "documenter": {
-        "label": "Documenter",
-        "tools": READ_TOOLS + WRITE_TOOLS + ["run_dbt"],
-        "prompt": """Your role: DOCUMENTER.
-Write or improve model and column descriptions in the YAML properties files (and doc blocks if the project uses them), matching the project's style.
-Do not change SQL logic. Validate with run_dbt parse.""",
-    },
-}
-
 SUBAGENT_GUIDELINES = """You are one member of an agent team working on a task assigned by the team lead.
 You cannot ask the user or the lead questions: make reasonable decisions and state them.
 Other agents may be working on other models in parallel: only touch the files your task is about.
 Finish with a concise report: what you did, files created or changed, validation results (commands and outcome), and open issues."""
 
-LEAD_GUIDELINES = f"""TEAM MODE: you are the team lead. You do not edit files yourself; you plan the work and delegate it with run_subagents to specialized agents:
-{chr(10).join(f"- {name}: {role['label']}" for name, role in ROLES.items())}
+LEAD_TOOLS = ["list_files", "read_file", "search_files", "list_nodes", "get_node", "get_compiled_sql", "run_dbt"]
+
+
+def lead_guidelines(team: Dict[str, Any]) -> str:
+    roles = "\n".join(
+        f"- {role['id']} ({role['label']}): {role['description'] or 'no description'}" for role in team["roles"]
+    )
+    workflow = team["workflow"] or "Decide the order of the work yourself based on the request."
+    return f"""TEAM MODE: you are the lead of the team "{team['name']}". You do not edit files yourself; you plan the work and delegate it with run_subagents to these agents:
+{roles}
+
+Team workflow:
+{workflow}
 
 How to lead:
 - First explore enough of the project to plan (files, existing models, conventions, sources). Ask the user a question only if the request is genuinely ambiguous.
 - Split the work per model. Tasks given in a single run_subagents call run in parallel, so only parallelize tasks that touch different files (one agent per model or per properties file).
-- Default workflow, test-driven: 1) testers write the tests for each model, 2) developers implement each model until its tests pass, 3) a reviewer checks the result. Skip phases that do not apply (e.g. a pure documentation request).
 - Sub-agents do not see this conversation: give each one complete, self-contained instructions (goal, model name and file path, relevant columns/sources, conventions, the test names to satisfy, and what to report).
-- Read the reports. If tests fail or the reviewer finds problems, dispatch follow-up tasks.
+- Read the reports. If something failed or a review found problems, dispatch follow-up tasks.
 - Finish with a summary for the user: what each agent did, files changed, test status, and anything left to decide."""
 
-RUN_SUBAGENTS_SPEC = ToolSpec(
-    name="run_subagents",
-    description=(
-        "Dispatch tasks to specialized agents. All tasks in one call run in parallel and the call returns when "
-        f"they are all finished, with each agent's report. Max {MAX_PARALLEL_TASKS} tasks per call."
-    ),
-    input_schema={
-        "type": "object",
-        "properties": {
-            "tasks": {
-                "type": "array",
-                "items": {
-                    "type": "object",
-                    "properties": {
-                        "role": {"type": "string", "enum": list(ROLES)},
-                        "title": {"type": "string", "description": "Short label shown to the user, e.g. 'Tests for stg_orders'."},
-                        "instructions": {"type": "string", "description": "Complete, self-contained instructions for the agent."},
+
+def run_subagents_spec(team: Dict[str, Any]) -> ToolSpec:
+    return ToolSpec(
+        name="run_subagents",
+        description=(
+            "Dispatch tasks to the team's agents. All tasks in one call run in parallel and the call returns when "
+            f"they are all finished, with each agent's report. Max {MAX_PARALLEL_TASKS} tasks per call."
+        ),
+        input_schema={
+            "type": "object",
+            "properties": {
+                "tasks": {
+                    "type": "array",
+                    "items": {
+                        "type": "object",
+                        "properties": {
+                            "role": {"type": "string", "enum": [role["id"] for role in team["roles"]]},
+                            "title": {"type": "string", "description": "Short label shown to the user, e.g. 'Tests for stg_orders'."},
+                            "instructions": {"type": "string", "description": "Complete, self-contained instructions for the agent."},
+                        },
+                        "required": ["role", "title", "instructions"],
                     },
-                    "required": ["role", "title", "instructions"],
                 },
             },
+            "required": ["tasks"],
         },
-        "required": ["tasks"],
-    },
-    execute=lambda ctx, args: "",  # handled by TeamSession
-)
-
-LEAD_TOOLS = READ_TOOLS + ["run_dbt"]
+        execute=lambda ctx, args: "",  # handled by TeamSession
+    )
 
 
 class Cancelled(Exception):
@@ -128,9 +100,12 @@ def _final_text(messages: List[Dict[str, Any]]) -> str:
 class TeamSession:
     """One team run: an event queue for the SSE response, approvals and cancellation."""
 
-    def __init__(self, ctx: ToolContext, auto_approve: bool):
+    def __init__(self, ctx: ToolContext, auto_approve: bool, team: Dict[str, Any]):
         self.id = uuid.uuid4().hex
         self.ctx = ctx
+        self.team = team
+        self.roles = {role["id"]: role for role in team["roles"]}
+        self.run_subagents_spec = run_subagents_spec(team)
         self.auto_approve = auto_approve
         self.events: "queue.Queue[Optional[Dict[str, Any]]]" = queue.Queue()
         self.cancelled = threading.Event()
@@ -180,14 +155,14 @@ class TeamSession:
 
     def _execute(self, agent: str, block: Dict[str, Any], allowed: List[str], lead: bool) -> Dict[str, Any]:
         tool_id, name, args = block["id"], block["name"], block.get("input", {})
-        spec = RUN_SUBAGENTS_SPEC if lead and name == "run_subagents" else TOOLS_BY_NAME.get(name) if name in allowed else None
+        spec = self.run_subagents_spec if lead and name == "run_subagents" else TOOLS_BY_NAME.get(name) if name in allowed else None
         is_error = False
 
         if spec is None:
             output, is_error = f"Tool not available to this agent: {name}", True
         elif (error := validate_input(spec, args)) is not None:
             output, is_error = f"Invalid input: {error}", True
-        elif spec is RUN_SUBAGENTS_SPEC:
+        elif spec is self.run_subagents_spec:
             self.emit(agent, {"type": "tool_running", "id": tool_id, "name": name})
             output, is_error = self._run_subagents(tool_id, args["tasks"])
         elif spec.needs_approval(args) and not self.auto_approve and not self._wait_for_approval(agent, block):
@@ -211,7 +186,7 @@ class TeamSession:
             result["is_error"] = True
         return result
 
-    def run_loop(self, agent: str, system: str, allowed: List[str], messages: List[Dict[str, Any]], max_turns: int, lead: bool = False) -> List[Dict[str, Any]]:
+    def run_loop(self, agent: str, system: str, allowed: List[str], messages: List[Dict[str, Any]], max_turns: int, lead: bool = False, model: str = "") -> List[Dict[str, Any]]:
         """Run one agent until it stops calling tools.
 
         `messages` is updated in place, so the caller keeps the work done so far if the
@@ -219,13 +194,13 @@ class TeamSession:
         """
         tools = [_tool_definition(TOOLS_BY_NAME[name]) for name in allowed]
         if lead:
-            tools.append(_tool_definition(RUN_SUBAGENTS_SPEC))
+            tools.append(_tool_definition(self.run_subagents_spec))
         json_retries = 0
 
         for _ in range(max_turns):
             self._check_cancelled()
             try:
-                turn = stream_turn(system, messages, tools)
+                turn = stream_turn(system, messages, tools, model)
                 try:
                     while True:
                         self._check_cancelled()
@@ -263,12 +238,14 @@ class TeamSession:
         raise ToolError(f"Stopped after {max_turns} steps.")
 
     def _run_subagent(self, agent: str, parent_tool_id: str, task: Dict[str, Any]) -> str:
-        role = ROLES[task["role"]]
+        role = self.roles[task["role"]]
         self.emit(agent, {"type": "agent_start", "role": task["role"], "label": role["label"], "title": task["title"], "parent_tool_id": parent_tool_id})
-        system = f"{self.system}\n\n{SUBAGENT_GUIDELINES}\n\n{role['prompt']}"
+        system = f"{self.system}\n\n{SUBAGENT_GUIDELINES}\n\nYour role: {role['label']}.\n{role['instructions']}"
         status, report = "done", ""
         try:
-            history = self.run_loop(agent, system, role["tools"], [{"role": "user", "content": task["instructions"]}], SUBAGENT_MAX_TURNS)
+            history = self.run_loop(
+                agent, system, role["tools"], [{"role": "user", "content": task["instructions"]}], SUBAGENT_MAX_TURNS, model=role["model"],
+            )
             report = _final_text(history)
         except Cancelled:
             status, report = "cancelled", "Cancelled by the user."
@@ -285,8 +262,8 @@ class TeamSession:
         if not tasks or len(tasks) > MAX_PARALLEL_TASKS:
             return f"Provide between 1 and {MAX_PARALLEL_TASKS} tasks.", True
         for task in tasks:
-            if not isinstance(task, dict) or task.get("role") not in ROLES or not all(isinstance(task.get(k), str) and task.get(k) for k in ("title", "instructions")):
-                return f"Each task needs a role ({', '.join(ROLES)}), a title and instructions.", True
+            if not isinstance(task, dict) or task.get("role") not in self.roles or not all(isinstance(task.get(k), str) and task.get(k) for k in ("title", "instructions")):
+                return f"Each task needs a role ({', '.join(self.roles)}), a title and instructions.", True
 
         # Ids are unique across the runs of a conversation (the UI keeps every run's lanes)
         agents = [f"a{next(self._agent_ids)}-{self.id[:8]}" for _ in tasks]
@@ -302,7 +279,7 @@ class TeamSession:
                 self.emit("lead", {"type": "error", "message": "Nothing to do: send a message."})
                 return
             history = list(messages) + [{"role": "user", "content": [{"type": "text", "text": user_message}]}]
-            system = f"{self.system}\n\n{LEAD_GUIDELINES}"
+            system = f"{self.system}\n\n{lead_guidelines(self.team)}"
             try:
                 self.run_loop("lead", system, LEAD_TOOLS, history, LEAD_MAX_TURNS, lead=True)
                 self.emit("lead", {"type": "messages", "messages": history})
@@ -327,9 +304,9 @@ _sessions: Dict[str, TeamSession] = {}
 _sessions_lock = threading.Lock()
 
 
-def start_session(ctx: ToolContext, auto_approve: bool, messages: List[Dict[str, Any]], user_message: str) -> TeamSession:
+def start_session(ctx: ToolContext, auto_approve: bool, team: Dict[str, Any], messages: List[Dict[str, Any]], user_message: str) -> TeamSession:
     ctx.lock_wait_seconds = LOCK_WAIT_SECONDS
-    session = TeamSession(ctx, auto_approve)
+    session = TeamSession(ctx, auto_approve, team)
     ctx.cancelled = session.cancelled
     with _sessions_lock:
         _sessions[session.id] = session

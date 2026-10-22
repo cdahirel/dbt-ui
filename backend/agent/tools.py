@@ -78,7 +78,8 @@ def resolve_in_project(ctx: ToolContext, rel_path: str) -> Path:
     target = (root / rel_path.strip().lstrip("/")).resolve()
     if target != root and not target.is_relative_to(root):
         raise ToolError("Path escapes the project directory")
-    if any(part in (".git", ".dbt-ui-venv") for part in target.relative_to(root).parts):
+    # .dbt-ui holds dbt-ui settings such as agent teams: agents must not change their own config
+    if any(part in (".git", ".dbt-ui-venv", ".dbt-ui") for part in target.relative_to(root).parts):
         raise ToolError("Access to this directory is not allowed")
     return target
 

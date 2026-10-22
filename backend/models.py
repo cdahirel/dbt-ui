@@ -134,6 +134,7 @@ class AgentChatRequest(BaseModel):
     approvals: Dict[str, bool] = {}  # tool_use_id -> approved, for calls awaiting approval
     auto_approve: bool = False  # Run file changes and warehouse-mutating dbt commands without asking
     target: str = ""  # dbt target to use
+    team_id: str = ""  # Team mode: team to run (empty = default team)
 
 
 class AgentApprovalRequest(BaseModel):
@@ -144,3 +145,13 @@ class AgentApprovalRequest(BaseModel):
 
 class AgentSessionRequest(BaseModel):
     session_id: str
+
+
+class AgentTeamSaveRequest(BaseModel):
+    path: str  # Project path (teams are stored in <project>/.dbt-ui/agent-teams.json)
+    team: Dict[str, Any]  # Team definition; no id creates a new team
+
+
+class AgentTeamDeleteRequest(BaseModel):
+    path: str
+    team_id: str

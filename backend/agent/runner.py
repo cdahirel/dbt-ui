@@ -19,6 +19,8 @@ MODEL = os.environ.get("DBT_UI__AGENT_MODEL", "claude-opus-5-5")
 EFFORT = os.environ.get("DBT_UI__AGENT_EFFORT", "high")
 # Server-side refusal fallback (re-runs a declined request on another model)
 FALLBACKS_ENABLED = os.environ.get("DBT_UI__AGENT_FALLBACKS", "true").lower() in ("true", "1", "yes")
+# Models that accept the server-side refusal fallback ("default" form)
+FALLBACK_MODELS = {"claude-fable-5-1", "claude-opus-5-5", "claude-opus-5", "claude-sonnet-5-5"}
 MAX_TOKENS = 64000
 MAX_TURNS = 30
 
@@ -172,10 +174,12 @@ def stream_turn(
     system: str,
     messages: List[Dict[str, Any]],
     tools: Optional[List[Dict[str, Any]]] = None,
+    model: str = "",
 ) -> Generator[Event, None, Any]:
     """Stream one model response, yielding UI events. Returns the final message."""
+    model = model or MODEL
     params: Dict[str, Any] = dict(
-        model=MODEL,
+        model=model,
         max_tokens=MAX_TOKENS,
         system=system,
         tools=tools if tools is not None else tool_definitions(),
@@ -184,7 +188,7 @@ def stream_turn(
         output_config={"effort": EFFORT},
         cache_control={"type": "ephemeral"},
     )
-    if FALLBACKS_ENABLED:
+    if FALLBACKS_ENABLED and model in FALLBACK_MODELS:
         params["betas"] = ["server-side-fallback-2026-07-01"]
         params["fallbacks"] = "default"
 

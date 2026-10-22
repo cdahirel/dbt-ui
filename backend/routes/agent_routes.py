@@ -6,9 +6,12 @@ from pathlib import Path
 from fastapi import APIRouter, HTTPException, Request
 from fastapi.responses import StreamingResponse
 
-from models import AgentChatRequest, AgentApprovalRequest, AgentSessionRequest
+from models import AgentChatRequest, AgentApprovalRequest, AgentSessionRequest, AgentTeamSaveRequest, AgentTeamDeleteRequest, ProjectPath
 from agent.runner import MODEL, is_agent_configured, run_agent
-from agent.team import ROLES, end_session, get_session, start_session
+from agent.team import end_session, get_session, start_session
+from agent.teams import (
+    DEFAULT_TEAM_ID, ROLE_MODELS, TeamValidationError, available_tools, delete_team, get_team, list_teams, save_team,
+)
 from agent.tools import ToolContext
 from routes.env_routes import get_env_vars_from_cookie
 from utils.input_validation import validate_dbt_target, validate_file_path
@@ -35,6 +38,13 @@ def _prepare(request: AgentChatRequest, http_request: Request):
     return ctx, user_message
 
 
+def _project_dir(path: str) -> Path:
+    project_path = Path(path).expanduser().resolve()
+    if not project_path.is_dir():
+        raise HTTPException(status_code=404, detail="Project path does not exist")
+    return project_path
+
+
 def _sse(event: dict) -> str:
     return f"data: {json.dumps(event)}\n\n"
 
@@ -46,11 +56,7 @@ SSE_HEADERS = {"Cache-Control": "no-cache", "X-Accel-Buffering": "no"}
 @router.get("/api/agent/status")
 async def agent_status():
     """Report whether the assistant can reach the Anthropic API."""
-    return {
-        "configured": is_agent_configured(),
-        "model": MODEL,
-        "roles": {name: role["label"] for name, role in ROLES.items()},
-    }
+    return {"configured": is_agent_configured(), "model": MODEL}
 
 
 @router.post("/api/agent/chat")
@@ -77,7 +83,10 @@ def agent_team(request: AgentChatRequest, http_request: Request):
     Every event carries an `agent` field: "lead" or the sub-agent id.
     """
     ctx, user_message = _prepare(request, http_request)
-    session = start_session(ctx, request.auto_approve, request.messages, user_message)
+    team = get_team(ctx.project_path, request.team_id)
+    if team is None:
+        raise HTTPException(status_code=404, detail="Team not found")
+    session = start_session(ctx, request.auto_approve, team, request.messages, user_message)
 
     def event_stream():
         try:
@@ -114,4 +123,38 @@ async def agent_cancel(request: AgentSessionRequest):
     session = get_session(request.session_id)
     if session:
         session.cancel()
+    return {"success": True}
+
+
+@router.post("/api/agent/teams")
+async def agent_teams(request: ProjectPath):
+    """List the default team and the project's custom teams, plus what a role can use."""
+    project_path = _project_dir(request.path)
+    return {
+        "teams": list_teams(project_path),
+        "default_team_id": DEFAULT_TEAM_ID,
+        "tools": available_tools(),
+        "models": ROLE_MODELS,
+        "default_model": MODEL,
+    }
+
+
+@router.post("/api/agent/teams/save")
+async def agent_team_save(request: AgentTeamSaveRequest):
+    """Create or update a custom team."""
+    project_path = _project_dir(request.path)
+    try:
+        return {"team": save_team(project_path, request.team)}
+    except TeamValidationError as e:
+        raise HTTPException(status_code=400, detail=str(e))
+
+
+@router.post("/api/agent/teams/delete")
+async def agent_team_delete(request: AgentTeamDeleteRequest):
+    """Delete a custom team."""
+    project_path = _project_dir(request.path)
+    try:
+        delete_team(project_path, request.team_id)
+    except TeamValidationError as e:
+        raise HTTPException(status_code=404, detail=str(e))
     return {"success": True}

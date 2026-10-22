@@ -162,6 +162,31 @@
   color: #d7a6d3;
 }
 
+.agent-role-c0 {
+  background-color: rgba(206, 145, 120, 0.18);
+  color: #e0a988;
+}
+
+.agent-role-c1 {
+  background-color: rgba(78, 201, 176, 0.15);
+  color: #6fd6bf;
+}
+
+.agent-role-c2 {
+  background-color: rgba(244, 135, 113, 0.15);
+  color: #f4a08f;
+}
+
+.agent-role-c3 {
+  background-color: rgba(181, 206, 168, 0.15);
+  color: #c3dbb6;
+}
+
+.agent-role-c4 {
+  background-color: rgba(100, 150, 255, 0.15);
+  color: #9db8ff;
+}
+
 .agent-role-documenter {
   background-color: rgba(115, 201, 145, 0.15);
   color: #a6e3b8;
@@ -190,6 +215,27 @@
 .agent-icon-btn:hover {
   background-color: #3c3c3c;
   color: #cccccc;
+}
+
+.agent-team-bar {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 6px 10px;
+  border-bottom: 1px solid #3c3c3c;
+  color: #858585;
+  flex-shrink: 0;
+}
+
+.agent-team-bar select {
+  flex: 1;
+  min-width: 0;
+  background-color: #3c3c3c;
+  border: 1px solid #3c3c3c;
+  color: #cccccc;
+  border-radius: 4px;
+  padding: 3px 6px;
+  font-size: 12px;
 }
 
 .agent-warning {
